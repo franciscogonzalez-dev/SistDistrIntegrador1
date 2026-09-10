@@ -20,14 +20,15 @@ def mostrar_estado(estado: dict):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--id", required=True, help="identificador del cliente")
+    parser.add_argument("--ip", required=True, help="IP del servidor")
+    parser.add_argument("--puerto", type=int, default=9002)
     args = parser.parse_args()
 
     reloj = RelojLamport()
 
-    # PYRONAME busca en el name server el objeto registrado como "subasta.primario".
-    # cuando tengamos backups y failover, este es el punto que va a cambiar
-    # (el cliente va a necesitar reintentar contra otro nodo si esto falla)
-    primario = Pyro5.api.Proxy("PYRONAME:subasta.primario")
+    primario = Pyro5.api.Proxy(
+        f"PYRO:nodo_primario@{args.ip}:{args.puerto}"
+    )
 
     print(f"Cliente {args.id!r} conectado. Estado inicial:")
     mostrar_estado(primario.obtener_estado())

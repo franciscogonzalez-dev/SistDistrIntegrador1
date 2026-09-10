@@ -89,17 +89,44 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--articulo", default="Articulo de prueba")
     parser.add_argument("--duracion", type=float, default=120.0)
+    parser.add_argument(
+        "--ip",
+        required=True,
+        help="IP de esta computadora en la red local, la que usaran los clientes",
+    )
+    parser.add_argument("--puerto", type=int, default=9002)
+    parser.add_argument(
+        "--bind-host",
+        default="0.0.0.0",
+        help="Interfaz local donde escucha el servidor (por defecto, todas)",
+    )
+    parser.add_argument(
+        "--ns-host",
+        help="IP del Name Server de Pyro5; si se omite, no se usa Name Server",
+    )
+    parser.add_argument("--ns-puerto", type=int, default=9090)
     args = parser.parse_args()
 
     primario = Primario(args.articulo, args.duracion)
 
-    daemon = Pyro5.api.Daemon()
-    ns = Pyro5.api.locate_ns()
+    daemon = Pyro5.api.Daemon(
+        host=args.bind_host,
+        port=args.puerto,
+        nathost=args.ip,
+    )
     uri = daemon.register(primario, "nodo_primario")
-    ns.register("subasta.primario", uri)
 
     print(f"Primario listo. Articulo: {args.articulo!r}, duracion: {args.duracion}s")
-    print(f"Registrado en el name server como 'subasta.primario' -> {uri}")
+    print(f"Escuchando en {args.ip}:{args.puerto}")
+    print(f"URI para los clientes: {uri}")
+
+    if args.ns_host:
+        ns = Pyro5.api.locate_ns(host=args.ns_host, port=args.ns_puerto)
+        ns.register("subasta.primario", uri)
+        print(
+            f"Registrado en el name server {args.ns_host}:{args.ns_puerto} "
+            "como 'subasta.primario'"
+        )
 
     daemon.requestLoop()
 
