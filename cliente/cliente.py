@@ -1,10 +1,36 @@
-# run python -m cliente.cliente --id (pablo rosales x ej)
+"""
+Cliente de consola. No usa name server: conoce de antemano la lista fija de
+nodos (comun/config.py) y los recorre preguntando "sos vos el primario?"
+hasta encontrar al que responda que si. Si despues una llamada falla porque
+el nodo que tenia guardado se cayo, vuelve a recorrer la lista.
+
+Correr:
+    python -m cliente.cliente --id ana
+"""
 
 import argparse
 
 import Pyro5.api
+import Pyro5.errors
 
 from comun.reloj_lamport import RelojLamport
+from comun import config
+
+TIMEOUT_DESCUBRIMIENTO_SEG = 1.5
+
+
+def encontrar_primario():
+    """Recorre config.NODOS y devuelve un Proxy al que dice ser primario."""
+    for host, puerto in config.NODOS:
+        proxy = Pyro5.api.Proxy(config.uri_de(host, puerto))
+        proxy._pyroTimeout = TIMEOUT_DESCUBRIMIENTO_SEG
+        try:
+            if proxy.es_primario():
+                print(f"  primario encontrado en {host}:{puerto}")
+                return proxy
+        except Pyro5.errors.CommunicationError:
+            continue  # este nodo no responde, probamos el siguiente
+    raise RuntimeError("Ningun nodo de la lista respondio como primario")
 
 
 def mostrar_estado(estado: dict):
@@ -20,33 +46,35 @@ def mostrar_estado(estado: dict):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--id", required=True, help="identificador del cliente")
-    parser.add_argument("--ip", required=True, help="IP del servidor")
-    parser.add_argument("--puerto", type=int, default=9002)
     args = parser.parse_args()
 
     reloj = RelojLamport()
 
-    primario = Pyro5.api.Proxy(
-        f"PYRO:nodo_primario@{args.ip}:{args.puerto}"
-    )
+    print("Buscando nodo primario...")
+    primario = encontrar_primario()
 
     print(f"Cliente {args.id!r} conectado. Estado inicial:")
     mostrar_estado(primario.obtener_estado())
 
     while True:
-        entrada = input(f"[{args.id}] monto a ofertar (o 'q' para salir): ")
+        entrada = input(f"[{args.id}] incremento a ofertar (o 'q' para salir): ")
         if entrada.strip().lower() == "q":
             break
         try:
-            monto = float(entrada)
+            incremento = float(entrada)
         except ValueError:
-            print("  monto invalido, probá de nuevo")
+            print("  incremento invalido, proba de nuevo")
             continue
 
-        clock_envio = reloj.tick()  # incrementamos ANTES de mandar el mensaje
-        respuesta = primario.ofertar(args.id, monto, clock_envio)
+        clock_envio = reloj.tick()
+        try:
+            respuesta = primario.ofertar(args.id, incremento, clock_envio)
+        except Pyro5.errors.CommunicationError:
+            print("  el nodo dejo de responder, buscando nuevo primario...")
+            primario = encontrar_primario()
+            continue
 
-        reloj.actualizar(respuesta["estado"]["clock_lamport"])  # sincronizamos
+        reloj.actualizar(respuesta["estado"]["clock_lamport"])
 
         print(f"  {respuesta['motivo']}")
         mostrar_estado(respuesta["estado"])

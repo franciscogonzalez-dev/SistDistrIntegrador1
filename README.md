@@ -1,41 +1,42 @@
-# Sistema de subastas distribuido — camino feliz
- falta los backups y la tolerancia a fallos
 
-## como levantarlo
+ya no hay name server: cada nodo escucha en una IP:puerto fija, definida en
+`comun/config.py` (por defecto, 3 direcciones en localhost). El cliente
+conoce esa misma lista de antemano y la recorre preguntando si el nodo es el primario hasta encontrar al nodo correcto.
 
-**1) primario** (reemplazá `192.168.1.10` por la IP de la computadora del servidor):
+**1) primario** (por ahora, siempre el primero de la lista):
 ```
-py -m nodoPrimario.servidor --ip 192.168.1.10 --puerto 9002 --articulo "Cuadro" --duracion 120
-```
-`--duracion` son los segundos que dura la subasta en total. 
-
-**2) cliente(s)** — se pueden abrir varios en paralelo, usando la misma IP y puerto:
-```
-py -m cliente.cliente --id ana --ip 192.168.1.10 --puerto 9002
-py -m cliente.cliente --id beto --ip 192.168.1.10 --puerto 9002
+python -m nodoPrimario.servidor --host localhost --puerto 9091 --articulo "aceituna"
 ```
 
-El puerto `9002` debe estar permitido en el firewall de la computadora del
-servidor. Todos los equipos deben estar en la misma red y tener instalado
-Pyro5. El Name Server ya no es necesario para esta conexión directa.
+**2) cliente(s)** — podes abrir varios en paralelo:
+```
+python -m cliente.cliente --id alfredo
+python -m cliente.cliente --id pablo rosales
+```
 
-Cada cliente te va a pedir un monto para ofertar. Si es mayor a la oferta
-actual, se acepta; si no, se rechaza con el motivo.
+cada cliente te va a pedir un **incremento** (no un monto absoluto). El
+monto final siempre lo calcula el nodo: `mejor_oferta_actual + incremento`.
+La subasta tiene una ventana de 30 segundos que se reinicia con cada oferta
+aceptada; si nadie oferta en 30s, cierra y gana el ultimo postor.
 
-## estructura del proyecto
+## estructura
 
-
+```
 comun/
-  reloj_lamport.py   -> reloj logico de Lamport
-  protocolo.py        -> formato de los mensajes (Oferta, EstadoSubasta)
-primario/
-  servidor.py          -> nodo primario, expone metodos via Pyro5
+  config.py            -> lista fija de nodos del cluster + construccion de URIs
+  reloj_lamport.py      -> reloj logico de Lamport (requisito 5)
+  protocolo.py           -> formato de los mensajes (Oferta, EstadoSubasta)
+nodoPrimario/
+  servidor.py             -> nodo (por ahora siempre primario), expone metodos via Pyro5
 cliente/
-  cliente.py            -> cliente de consola
+  cliente.py                -> cliente de consola con descubrimiento por lista fija
+```
 
+## proximos pasos
 
-## to do list
-
-- Agregar backups que repliquen el estado (requisito 3).
-- Deteccion de falla + algoritmo de eleccion (requisito 4).
-- Reconexion automatica del cliente si el primario cae (requisito 1).
+- agregar backups que repliquen el estado (requisito 3) — usan la misma
+  `comun/config.py` para saber donde estan sus pares.
+- deteccion de falla + algoritmo de eleccion (requisito 4) — cuando un backup
+  gane la eleccion, pone su propio `_es_primario = True`. El cliente ya sabe
+  reaccionar: si el nodo que tenia guardado deja de responder, vuelve a
+  recorrer la lista y lo encuentra solo.

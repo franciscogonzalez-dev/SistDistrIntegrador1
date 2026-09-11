@@ -1,8 +1,14 @@
-#nodo primario que expone sus metodos via pyro5 para que los clientes lo usen como locales
 """
-Correr (en terminales separadas):
-    1) pyro5-ns
-    2) python -m primario.servidor --articulo "Cuadro" --duracion 120
+Nodo del sistema de subastas. Version "camino feliz" extendida: sigue siendo
+un unico nodo actuando de primario, pero ya:
+  - escucha en una IP:puerto fija (sin name server, ver comun/config.py)
+  - expone es_primario() para que los clientes lo puedan descubrir
+  - calcula el monto en el servidor a partir de un incremento (nunca confia
+    en un monto absoluto que mande el cliente)
+  - reinicia la ventana de 30s con cada oferta aceptada (cierre suave)
+
+Correr:
+    python -m primario.servidor --host localhost --puerto 9091 --articulo "Cuadro"
 """
 
 import argparse
@@ -13,22 +19,31 @@ import Pyro5.api
 
 from comun.reloj_lamport import RelojLamport
 from comun.protocolo import EstadoSubasta
+from comun import config
+
+DURACION_VENTANA_SEG = 30.0
 
 
 @Pyro5.api.expose
-class Primario:
-    def __init__(self, articulo: str, duracion_seg: float): # por ahora no inicializamos un valor base de la subasta
+class NodoSubasta:
+    def __init__(self, articulo: str):
         self._articulo = articulo
-        self._duracion_seg = duracion_seg
-        self._inicio = time.time()
+        self._ultimo_evento = time.time()  # se resetea con cada oferta aceptada
         self._mejor_oferta = 0.0
         self._mejor_postor: str | None = None
         self._cerrada = False
         self._reloj = RelojLamport()
-        self._lock = threading.Lock() # bloqueo para que no se transpapelen las ofertas
+        self._lock = threading.Lock()
+        # Hardcodeado en True por ahora: todavia no hay eleccion. Cuando se
+        # implemente, este valor va a depender del resultado del algoritmo
+        # de eleccion en vez de ser fijo.
+        self._es_primario = True
+
+    def es_primario(self) -> bool:
+        return self._es_primario
 
     def _tiempo_restante(self) -> float:
-        restante = self._duracion_seg - (time.time() - self._inicio)
+        restante = DURACION_VENTANA_SEG - (time.time() - self._ultimo_evento)
         return max(0.0, restante)
 
     def _estado_actual(self) -> dict:
@@ -41,16 +56,17 @@ class Primario:
             cerrada=self._cerrada or self._tiempo_restante() <= 0,
         ).serializar()
 
-    def ofertar(self, cliente_id: str, monto: float, clock_cliente: int) -> dict:
+    def ofertar(self, cliente_id: str, incremento: float, clock_cliente: int) -> dict:
         """
-        Un cliente llama esto para ofertar. Devuelve un dict con
-        {aceptada, motivo, estado}.
+        Un cliente llama esto para ofertar. Manda el INCREMENTO elegido
+        (+50, +100, etc.), nunca un monto absoluto: el monto final siempre
+        se calcula aca adentro, con el valor mas actual del servidor, para
+        que dos clientes que partieron de la misma lectura no puedan pisarse.
         """
         with self._lock:
-            # Sincronizamos nuestro reloj con el del cliente (regla de Lamport)
             self._reloj.actualizar(clock_cliente)
 
-            if self._cerrada or self._tiempo_restante() <= 0: #si ya terminó la subasta no se aceptan mas ofertas
+            if self._cerrada or self._tiempo_restante() <= 0:
                 self._cerrada = True
                 return {
                     "aceptada": False,
@@ -58,21 +74,24 @@ class Primario:
                     "estado": self._estado_actual(),
                 }
 
-            if monto <= self._mejor_oferta: # si el monto ofertado no supera a la mejor oferta se rechaza
+            if incremento <= 0:
                 return {
                     "aceptada": False,
-                    "motivo": f"Debe superar la oferta actual ({self._mejor_oferta})",
+                    "motivo": "El incremento debe ser positivo",
                     "estado": self._estado_actual(),
                 }
 
-            self._mejor_oferta = monto # si se acepta se actualiza la mejor oferta 
-            self._mejor_postor = cliente_id #
-            self._reloj.tick()  # evento local: aceptamos la oferta
+            nuevo_monto = self._mejor_oferta + incremento
 
-            print(f"[primario] nueva mejor oferta: {cliente_id} -> {monto}") # se informa la nueva mejor oferta
+            self._mejor_oferta = nuevo_monto
+            self._mejor_postor = cliente_id
+            self._ultimo_evento = time.time()  # reinicia la ventana de 30s
+            self._reloj.tick()
 
-            # aca es donde en el proximo paso vamos a replicar a los backups
-            # antes o despues de responder al cliente.
+            print(f"[nodo] nueva mejor oferta: {cliente_id} -> {nuevo_monto}")
+
+            # ACA es donde en el proximo paso vamos a replicar a los backups
+            # antes de (o despues de) responder al cliente.
 
             return {
                 "aceptada": True,
@@ -88,45 +107,18 @@ class Primario:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--articulo", default="Articulo de prueba")
-    parser.add_argument("--duracion", type=float, default=120.0)
-    parser.add_argument(
-        "--ip",
-        required=True,
-        help="IP de esta computadora en la red local, la que usaran los clientes",
-    )
-    parser.add_argument("--puerto", type=int, default=9002)
-    parser.add_argument(
-        "--bind-host",
-        default="0.0.0.0",
-        help="Interfaz local donde escucha el servidor (por defecto, todas)",
-    )
-    parser.add_argument(
-        "--ns-host",
-        help="IP del Name Server de Pyro5; si se omite, no se usa Name Server",
-    )
-    parser.add_argument("--ns-puerto", type=int, default=9090)
+    parser.add_argument("--host", default="localhost")
+    parser.add_argument("--puerto", type=int, required=True)
     args = parser.parse_args()
 
-    primario = Primario(args.articulo, args.duracion)
+    nodo = NodoSubasta(args.articulo)
 
-    daemon = Pyro5.api.Daemon(
-        host=args.bind_host,
-        port=args.puerto,
-        nathost=args.ip,
-    )
-    uri = daemon.register(primario, "nodo_primario")
+    daemon = Pyro5.api.Daemon(host=args.host, port=args.puerto)
+    daemon.register(nodo, objectId=config.OBJECT_ID)
 
-    print(f"Primario listo. Articulo: {args.articulo!r}, duracion: {args.duracion}s")
-    print(f"Escuchando en {args.ip}:{args.puerto}")
-    print(f"URI para los clientes: {uri}")
-
-    if args.ns_host:
-        ns = Pyro5.api.locate_ns(host=args.ns_host, port=args.ns_puerto)
-        ns.register("subasta.primario", uri)
-        print(
-            f"Registrado en el name server {args.ns_host}:{args.ns_puerto} "
-            "como 'subasta.primario'"
-        )
+    print(f"Nodo escuchando en {args.host}:{args.puerto}")
+    print(f"Articulo: {args.articulo!r}, ventana: {DURACION_VENTANA_SEG}s")
+    print(f"URI: {config.uri_de(args.host, args.puerto)}")
 
     daemon.requestLoop()
 
