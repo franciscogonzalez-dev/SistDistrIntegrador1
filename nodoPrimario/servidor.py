@@ -9,6 +9,9 @@ un unico nodo actuando de primario, pero ya:
 
 Correr:
     python -m primario.servidor --host localhost --puerto 9091 --articulo "Cuadro"
+    
+    a mi me funciona con: 
+        python -m nodoPrimario.servidor --host localhost --puerto 9091 --articulo "Cuadro"
 """
 
 import argparse
@@ -34,10 +37,12 @@ class NodoSubasta:
         self._cerrada = False
         self._reloj = RelojLamport()
         self._lock = threading.Lock()
+        self._seq_op= 0 
         # Hardcodeado en True por ahora: todavia no hay eleccion. Cuando se
         # implemente, este valor va a depender del resultado del algoritmo
         # de eleccion en vez de ser fijo.
         self._es_primario = True
+        
 
     def es_primario(self) -> bool:
         return self._es_primario
@@ -53,16 +58,18 @@ class NodoSubasta:
             mejor_postor=self._mejor_postor,
             tiempo_restante_seg=self._tiempo_restante(),
             clock_lamport=self._reloj.valor(),
+            seq_op=self._seq_op,
             cerrada=self._cerrada or self._tiempo_restante() <= 0,
         ).serializar()
 
-    def ofertar(self, cliente_id: str, incremento: float, clock_cliente: int) -> dict:
+    def ofertar(self, cliente_id: str, incremento: float, clock_cliente: int, seq_op_cliente: int) -> dict:
         """
         Un cliente llama esto para ofertar. Manda el INCREMENTO elegido
         (+50, +100, etc.), nunca un monto absoluto: el monto final siempre
         se calcula aca adentro, con el valor mas actual del servidor, para
         que dos clientes que partieron de la misma lectura no puedan pisarse.
         """
+        time.sleep(0.5) #para poder simular ofertas simultaneas
         with self._lock:
             self._reloj.actualizar(clock_cliente)
 
@@ -80,6 +87,17 @@ class NodoSubasta:
                     "motivo": "El incremento debe ser positivo",
                     "estado": self._estado_actual(),
                 }
+            
+            #validar que el cliente no tenga un estado desactualizado
+            if seq_op_cliente != self._seq_op:
+                return {
+                    "aceptada": False,
+                    "motivo": ( 
+                        f"El monto cambio a {self._mejor_oferta} antes de procesar tu oferta, volve a intentar"
+                    ),
+                    "estado": self._estado_actual(),
+                }
+
 
             nuevo_monto = self._mejor_oferta + incremento
 
@@ -87,6 +105,7 @@ class NodoSubasta:
             self._mejor_postor = cliente_id
             self._ultimo_evento = time.time()  # reinicia la ventana de 30s
             self._reloj.tick()
+            self._seq_op += 1
 
             print(f"[nodo] nueva mejor oferta: {cliente_id} -> {nuevo_monto}")
 
