@@ -39,6 +39,7 @@ def mostrar_estado(estado: dict):
         f"mejor_oferta={estado['mejor_oferta']} "
         f"mejor_postor={estado['mejor_postor']} "
         f"tiempo_restante={estado['tiempo_restante_seg']:.1f}s "
+        f"secuencia_operacion={estado['seq_op']} " #debug, nose si lo dejamos para la muestra
         f"cerrada={estado['cerrada']}"
     )
 
@@ -54,7 +55,9 @@ def main():
     primario = encontrar_primario()
 
     print(f"Cliente {args.id!r} conectado. Estado inicial:")
-    mostrar_estado(primario.obtener_estado())
+    estado_inicial = primario.obtener_estado()
+    seq_visto  = estado_inicial["seq_op"] #nro de operacion que se ve al conectarse
+    mostrar_estado(estado_inicial)
 
     while True:
         entrada = input(f"[{args.id}] incremento a ofertar (o 'q' para salir): ")
@@ -68,13 +71,14 @@ def main():
 
         clock_envio = reloj.tick()
         try:
-            respuesta = primario.ofertar(args.id, incremento, clock_envio)
+            respuesta = primario.ofertar(args.id, incremento, clock_envio, seq_visto)
         except Pyro5.errors.CommunicationError:
             print("  el nodo dejo de responder, buscando nuevo primario...")
             primario = encontrar_primario()
             continue
 
         reloj.actualizar(respuesta["estado"]["clock_lamport"])
+        seq_visto = respuesta["estado"]["seq_op"] 
 
         print(f"  {respuesta['motivo']}")
         mostrar_estado(respuesta["estado"])

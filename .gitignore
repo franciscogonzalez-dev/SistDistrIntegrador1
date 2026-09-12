@@ -1,0 +1,7 @@
+#no queria comitear lo del cache y los pyc, asi que lo agrego al gitignore
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
