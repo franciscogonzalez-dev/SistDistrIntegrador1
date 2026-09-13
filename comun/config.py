@@ -22,3 +22,9 @@ OBJECT_ID = "nodo_subasta"
 
 def uri_de(host: str, puerto: int) -> str:
     return f"PYRO:{OBJECT_ID}@{host}:{puerto}"
+
+
+def otros_nodos(host: str, puerto: int):
+    """Todos los nodos de NODOS excepto el propio (host, puerto). El primario
+    usa esto para saber a quien replicarle el estado."""
+    return [(h, p) for (h, p) in NODOS if (h, p) != (host, puerto)]
