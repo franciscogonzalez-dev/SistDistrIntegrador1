@@ -57,22 +57,28 @@ def mostrar_estado(estado: dict):
 
 @Pyro5.api.expose
 class ClienteCallback: #para que el server le pueda avisar al cliente cuando la subasta se cierra o cuando hay una nueva mejor oferta
+    def __init__(self, estado_local: dict):
+        self.estado_local = estado_local
+
     def notificar_estado(self, estado: dict):
         print(f"\n  [AVISO!] estado actualizado: mejor_oferta={estado['mejor_oferta']} "
               f"cerrada={estado['cerrada']}")
-        
+        self.estado_local["reloj"].actualizar(estado["clock_lamport"])
+        self.estado_local["seq_visto"] = estado["seq_op"]
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--id", required=True, help="identificador del cliente")
     args = parser.parse_args()
 
     reloj = RelojLamport()
+    estado_local = {"reloj": reloj, "seq_visto": 0}
 
     print("Buscando nodo primario...")
     primario = encontrar_primario()
     
     daemon_cliente = Pyro5.api.Daemon() #daemon para que el server pueda llamar al cliente y avisarle cuando la subasta se cierra
-    callback = ClienteCallback()
+    callback = ClienteCallback(estado_local)
     uri_callback = daemon_cliente.register(callback)
     threading.Thread(target=daemon_cliente.requestLoop, daemon=True).start()
     primario.subscribir_cliente(str(uri_callback))
@@ -80,7 +86,7 @@ def main():
 
     print(f"Cliente {args.id!r} conectado. Estado inicial:")
     estado_inicial = primario.obtener_estado()
-    seq_visto  = estado_inicial["seq_op"] #nro de operacion que se ve al conectarse
+    estado_local["seq_visto"] = estado_inicial["seq_op"] #nro de operacion que se ve al conectarse
     mostrar_estado(estado_inicial)
 
     while True:
@@ -95,14 +101,14 @@ def main():
 
         clock_envio = reloj.tick()
         try:
-            respuesta = primario.ofertar(args.id, incremento, clock_envio, seq_visto)
+            respuesta = primario.ofertar(args.id, incremento, clock_envio, estado_local["seq_visto"])
         except Pyro5.errors.CommunicationError:
             print("  el nodo dejo de responder, buscando nuevo primario...")
             primario = encontrar_primario()
             continue
 
         reloj.actualizar(respuesta["estado"]["clock_lamport"])
-        seq_visto = respuesta["estado"]["seq_op"] 
+        estado_local["seq_visto"] = respuesta["estado"]["seq_op"] 
 
         print(f"  {respuesta['motivo']}")
         mostrar_estado(respuesta["estado"])
