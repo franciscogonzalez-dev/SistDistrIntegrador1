@@ -9,6 +9,7 @@ Correr:
 """
 
 import argparse
+import threading
 
 import Pyro5.api
 import Pyro5.errors
@@ -21,17 +22,21 @@ TIMEOUT_DESCUBRIMIENTO_SEG = 1.5
 
 def encontrar_primario():
     """Recorre config.NODOS y devuelve un Proxy al que dice ser primario."""
-    for host, puerto in config.NODOS:
-        proxy = Pyro5.api.Proxy(config.uri_de(host, puerto))
-        proxy._pyroTimeout = TIMEOUT_DESCUBRIMIENTO_SEG
-        try:
-            if proxy.es_primario():
-                print(f"  primario encontrado en {host}:{puerto}")
-                return proxy
-        except Pyro5.errors.CommunicationError:
-            continue  # este nodo no responde, probamos el siguiente
-    raise RuntimeError("Ningun nodo de la lista respondio como primario")
-
+    try: 
+        for host, puerto in config.NODOS:
+            proxy = Pyro5.api.Proxy(config.uri_de(host, puerto))
+            proxy._pyroTimeout = TIMEOUT_DESCUBRIMIENTO_SEG
+            try:
+                if proxy.es_primario():
+                    print(f"  primario encontrado en {host}:{puerto}")
+                    return proxy
+            except Pyro5.errors.CommunicationError:
+                continue  # este nodo no responde, probamos el siguiente
+        raise RuntimeError("Ningun nodo de la lista respondio como primario")
+    
+    except RuntimeError as e: #agregue esto porque capaz no le copa al profe que salga toda la excep
+        print(f"Error al descubrir primario: {e}")
+        exit(1)
 
 def mostrar_estado(estado: dict):
     print(
@@ -43,7 +48,12 @@ def mostrar_estado(estado: dict):
         f"cerrada={estado['cerrada']}"
     )
 
-
+@Pyro5.api.expose
+class ClienteCallback: #para que el server le pueda avisar al cliente cuando la subasta se cierra o cuando hay una nueva mejor oferta
+    def notificar_estado(self, estado: dict):
+        print(f"\n  [AVISO!] estado actualizado: mejor_oferta={estado['mejor_oferta']} "
+              f"cerrada={estado['cerrada']}")
+        
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--id", required=True, help="identificador del cliente")
@@ -53,6 +63,13 @@ def main():
 
     print("Buscando nodo primario...")
     primario = encontrar_primario()
+    
+    daemon_cliente = Pyro5.api.Daemon() #daemon para que el server pueda llamar al cliente y avisarle cuando la subasta se cierra
+    callback = ClienteCallback()
+    uri_callback = daemon_cliente.register(callback)
+    threading.Thread(target=daemon_cliente.requestLoop, daemon=True).start()
+    primario.subscribir_cliente(str(uri_callback))
+
 
     print(f"Cliente {args.id!r} conectado. Estado inicial:")
     estado_inicial = primario.obtener_estado()

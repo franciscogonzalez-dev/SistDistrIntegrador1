@@ -43,6 +43,11 @@ class NodoSubasta:
         # de eleccion en vez de ser fijo.
         self._es_primario = True
         
+        
+        #esto permite informar a los clientes cuando la subasta se cierra, el server les pushea la informacion
+        self._clientes = []
+        threading.Thread(target=self._vigila_cierre, daemon=True).start() # thread aparte ya que el requestLoop de Pyro es bloqueante y se queda atendiendo clientes
+        self._ganador_anunciado = False #flag para que solo se notifique una vez el cierre de la subasta, si se hacen varias rondas se deberia resetear esta flag
 
     def es_primario(self) -> bool:
         return self._es_primario
@@ -112,6 +117,7 @@ class NodoSubasta:
             # ACA es donde en el proximo paso vamos a replicar a los backups
             # antes de (o despues de) responder al cliente.
 
+            self._notificar_clientes() #avisar a los clientes que la subasta se cerro
             return {
                 "aceptada": True,
                 "motivo": "Oferta aceptada",
@@ -121,6 +127,39 @@ class NodoSubasta:
     def obtener_estado(self) -> dict:
         with self._lock:
             return self._estado_actual()
+        
+    ### agregue esto para manejar laa notificacion del cierre
+    def subscribir_cliente(self, uri_cliente: str):
+        proxy = Pyro5.api.Proxy(uri_cliente) # crear proxy para comunicarse con el cliente
+        proxy._pyroOneway.add("notificar_estado") # el metodo "notificar_estado" esta en el cliente y es asincrono, el server envia notificacion al cliente y no espera respuesta
+        with self._lock:
+            self._clientes.append(proxy)
+    
+    def _notificar_clientes(self):
+        estado = self._estado_actual()
+        vivos = []
+        for proxy in self._clientes:
+            try:
+                proxy._pyroClaimOwnership() #importante ya que a lista de clientes es tocada por varios hilos, Pyro tira error si no se le dice explicatmente que hilo es el que esta tocando al proxy en el momento
+                                    #los hilos que llaman a los obj Proxy de cada cliente ocurre desde ofertar() y desde _vigila_cierre() que son hilos distintos, por eso hay que reclamar la propiedad del proxy antes de usarlo
+                proxy.notificar_estado(estado)
+                vivos.append(proxy)
+            except Pyro5.errors.CommunicationError:
+                pass  # ese cliente se cayo, no lo volvemos a agregar
+        self._clientes = vivos #esto capaz esta de mas pero sirve para quedarnos solo con los clientes que siguen vivos
+    
+    def _vigila_cierre(self):
+        while True:
+            time.sleep(1.0)
+            with self._lock:
+                if not self._ganador_anunciado and self._tiempo_restante() <= 0: #aca en caso de hacer varias rondas se deberia resetear la flag 
+                    self._cerrada = True
+                    self._ganador_anunciado = True
+                    print(f"[nodo] SUBASTA CERRADA. Ganador: {self._mejor_postor!r} con {self._mejor_oferta}")
+                    self._notificar_clientes()  # mismo metodo que usarian tras una oferta aceptada
+
+
+        
 
 
 def main():
