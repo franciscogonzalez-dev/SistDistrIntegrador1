@@ -25,6 +25,7 @@ class EstadoSubasta: # lo que devuelve el nodo primario
     tiempo_restante_seg: float
     clock_lamport: int  # reloj del primario al momento de responder
     cerrada: bool = False # tranquilamente lo podria asumir por el tiempo restante pero tmb sirve
+    iniciada: bool = False
     seq_op: int = 0 #la cantidad de operaciones hasta el momento, se incremente en 1 por cada oferta aceptada,
                     #sirve para detectar si un cliente esta desactualizado del monto actual, y para los backups para ver si estan al dia con el primario
 

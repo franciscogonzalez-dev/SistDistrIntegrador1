@@ -35,6 +35,7 @@ class NodoSubasta:
         self._mejor_oferta = 0.0
         self._mejor_postor: str | None = None
         self._cerrada = False
+        self._iniciada = False
         self._reloj = RelojLamport()
         self._lock = threading.Lock()
         self._seq_op= 0 
@@ -43,16 +44,29 @@ class NodoSubasta:
         # de eleccion en vez de ser fijo.
         self._es_primario = True
         
-        
         #esto permite informar a los clientes cuando la subasta se cierra, el server les pushea la informacion
         self._clientes = []
         threading.Thread(target=self._vigila_cierre, daemon=True).start() # thread aparte ya que el requestLoop de Pyro es bloqueante y se queda atendiendo clientes
         self._ganador_anunciado = False #flag para que solo se notifique una vez el cierre de la subasta, si se hacen varias rondas se deberia resetear esta flag
 
+    def iniciar_subasta(self) -> bool:
+        """El operador del servidor llama a esto presionando 's' para arrancar la subasta."""
+        with self._lock:
+            if self._iniciada:
+                print("[nodo] La subasta ya estaba iniciada.")
+                return False
+            self._iniciada = True
+            self._ultimo_evento = time.time()
+            print(f"[nodo] ¡SUBASTA INICIADA! Articulo: {self._articulo!r}, ventana de {DURACION_VENTANA_SEG}s activa.")
+            self._notificar_clientes()
+            return True
+
     def es_primario(self) -> bool:
         return self._es_primario
 
     def _tiempo_restante(self) -> float:
+        if not self._iniciada:
+            return DURACION_VENTANA_SEG
         restante = DURACION_VENTANA_SEG - (time.time() - self._ultimo_evento)
         return max(0.0, restante)
 
@@ -64,7 +78,8 @@ class NodoSubasta:
             tiempo_restante_seg=self._tiempo_restante(),
             clock_lamport=self._reloj.valor(),
             seq_op=self._seq_op,
-            cerrada=self._cerrada or self._tiempo_restante() <= 0,
+            cerrada=self._cerrada or (self._iniciada and self._tiempo_restante() <= 0),
+            iniciada=self._iniciada,
         ).serializar()
 
     def ofertar(self, cliente_id: str, incremento: float, clock_cliente: int, seq_op_cliente: int) -> dict:
@@ -77,6 +92,13 @@ class NodoSubasta:
         time.sleep(0.5) #para poder simular ofertas simultaneas
         with self._lock:
             self._reloj.actualizar(clock_cliente)
+
+            if not self._iniciada:
+                return {
+                    "aceptada": False,
+                    "motivo": "La subasta aun no ha iniciado. Esperando a que el servidor la inicie...",
+                    "estado": self._estado_actual(),
+                }
 
             if self._cerrada or self._tiempo_restante() <= 0:
                 self._cerrada = True
@@ -134,6 +156,7 @@ class NodoSubasta:
         proxy._pyroOneway.add("notificar_estado") # el metodo "notificar_estado" esta en el cliente y es asincrono, el server envia notificacion al cliente y no espera respuesta
         with self._lock:
             self._clientes.append(proxy)
+            print(f"[nodo] un cliente se unió a la sala: {uri_cliente}")
     
     def _notificar_clientes(self):
         estado = self._estado_actual()
@@ -152,14 +175,11 @@ class NodoSubasta:
         while True:
             time.sleep(1.0)
             with self._lock:
-                if not self._ganador_anunciado and self._tiempo_restante() <= 0: #aca en caso de hacer varias rondas se deberia resetear la flag 
+                if self._iniciada and not self._ganador_anunciado and self._tiempo_restante() <= 0: #aca en caso de hacer varias rondas se deberia resetear la flag 
                     self._cerrada = True
                     self._ganador_anunciado = True
                     print(f"[nodo] SUBASTA CERRADA. Ganador: {self._mejor_postor!r} con {self._mejor_oferta}")
                     self._notificar_clientes()  # mismo metodo que usarian tras una oferta aceptada
-
-
-        
 
 
 def main():
@@ -178,7 +198,28 @@ def main():
     print(f"Articulo: {args.articulo!r}, ventana: {DURACION_VENTANA_SEG}s")
     print(f"URI: {config.uri_de(args.host, args.puerto)}")
 
-    daemon.requestLoop()
+    # Cambié daemon.requestLoop() por un hilo,  esto es para que el hilo principal no espere a que terminen todas las llamadas de los clientes y pueda ejecutar el comando 's' para iniciar la subasta
+    hilo_daemon = threading.Thread(target=daemon.requestLoop, daemon=True)
+    hilo_daemon.start()
+
+    print(">>> Presiona 's' + Enter para INICIAR la subasta <<<")
+    while True:
+        try:
+            cmd = input().strip().lower()
+            if cmd == "s":
+                nodo.iniciar_subasta()
+                break
+            else:
+                print("  Comando no reconocido. Presiona 's' para iniciar la subasta.")
+        except (KeyboardInterrupt, EOFError):
+            break
+
+    # Mantener el hilo principal activo
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nServidor cerrado.")
 
 
 if __name__ == "__main__":
