@@ -8,6 +8,7 @@ Correr:
     python -m cliente.cliente --id ana
 """
 
+import threading
 import argparse
 
 import Pyro5.api
@@ -18,6 +19,12 @@ from comun import config
 
 TIMEOUT_DESCUBRIMIENTO_SEG = 1.5
 
+
+OPCIONES_OFERTA = {
+    "1": 100.0,
+    "2": 250.0,
+    "3": 500.0,
+}
 
 def encontrar_primario():
     """Recorre config.NODOS y devuelve un Proxy al que dice ser primario."""
@@ -60,14 +67,14 @@ def main():
     mostrar_estado(estado_inicial)
 
     while True:
-        entrada = input(f"[{args.id}] incremento a ofertar (o 'q' para salir): ")
-        if entrada.strip().lower() == "q":
+        entrada = input(f"[{args.id}] incremento a ofertar [1] +100 [2] +250 [3] +500 (o 'q' para salir): ").strip()
+        if entrada.lower() == "q":
             break
-        try:
-            incremento = float(entrada)
-        except ValueError:
-            print("  incremento invalido, proba de nuevo")
+        if entrada not in OPCIONES_OFERTA:
+            print("  opcion invalida, proba de nuevo (opciones validas: 1, 2, 3 o q)")
             continue
+
+        incremento = OPCIONES_OFERTA[entrada]
 
         clock_envio = reloj.tick()
         try:
