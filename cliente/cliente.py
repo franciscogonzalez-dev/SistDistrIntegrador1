@@ -1,14 +1,12 @@
 """
-Cliente de consola. No usa name server: conoce de antemano la lista fija de
-nodos (comun/config.py) y los recorre preguntando "sos vos el primario?"
-hasta encontrar al que responda que si. Si despues una llamada falla porque
-el nodo que tenia guardado se cayo, vuelve a recorrer la lista.
+Cliente de consola. Conoce una lista fija de nodos de arranque, pero la
+eleccion del primario la hacen los propios nodos. Si el nodo guardado cae,
+consulta a otro nodo y sigue la ubicacion del nuevo primario.
 
 Correr:
     python -m cliente.cliente --id ana
 """
 
-import threading
 import argparse
 import threading
 
@@ -28,22 +26,20 @@ OPCIONES_OFERTA = {
 }
 
 def encontrar_primario():
-    """Recorre config.NODOS y devuelve un Proxy al que dice ser primario."""
-    try: 
-        for host, puerto in config.NODOS:
-            proxy = Pyro5.api.Proxy(config.uri_de(host, puerto))
-            proxy._pyroTimeout = TIMEOUT_DESCUBRIMIENTO_SEG
-            try:
-                if proxy.es_primario():
-                    print(f"  primario encontrado en {host}:{puerto}")
-                    return proxy
-            except Pyro5.errors.CommunicationError:
-                continue  # este nodo no responde, probamos el siguiente
-        raise RuntimeError("Ningun nodo de la lista respondio como primario")
-    
-    except RuntimeError as e: #agregue esto porque capaz no le copa al profe que salga toda la excep
-        print(f"Error al descubrir primario: {e}")
-        exit(1)
+    """Pide a un nodo vivo la ubicacion decidida por el cluster."""
+    for host, puerto in config.NODOS:
+        nodo = Pyro5.api.Proxy(config.uri_de(host, puerto))
+        nodo._pyroTimeout = TIMEOUT_DESCUBRIMIENTO_SEG
+        try:
+            ubicacion = nodo.ubicacion_primario()
+            primario = Pyro5.api.Proxy(config.uri_de(ubicacion["host"], ubicacion["puerto"]))
+            primario._pyroTimeout = TIMEOUT_DESCUBRIMIENTO_SEG
+            primario.obtener_estado()
+            print(f"  primario indicado por el cluster en {ubicacion['host']}:{ubicacion['puerto']}")
+            return primario
+        except Pyro5.errors.CommunicationError:
+            continue
+    raise RuntimeError("Ningun nodo del cluster pudo indicar el primario")
 
 def mostrar_estado(estado: dict):
     print(
@@ -105,6 +101,11 @@ def main():
         except Pyro5.errors.CommunicationError:
             print("  el nodo dejo de responder, buscando nuevo primario...")
             primario = encontrar_primario()
+            primario.subscribir_cliente(str(uri_callback))
+            estado_actual = primario.obtener_estado()
+            reloj.actualizar(estado_actual["clock_lamport"])
+            estado_local["seq_visto"] = estado_actual["seq_op"]
+            mostrar_estado(estado_actual)
             continue
 
         reloj.actualizar(respuesta["estado"]["clock_lamport"])

@@ -1,9 +1,10 @@
 
 ya no hay name server: cada nodo escucha en una IP:puerto fija, definida en
-`comun/config.py` (por defecto, 3 direcciones en localhost). El cliente
-conoce esa misma lista de antemano y la recorre preguntando si el nodo es el primario hasta encontrar al nodo correcto.
+`comun/config.py` (por defecto, 3 direcciones en localhost). Los nodos hacen
+la eleccion del primario; el cliente solo consulta la ubicacion que le indica
+un nodo vivo.
 
-**1) primario** (por ahora, siempre el primero de la lista):
+**1) primario inicial** (el nodo que arranca sin `--backup`):
 ```
 python -m nodoPrimario.servidor --host localhost --puerto 9091 --articulo "aceituna"
 ```
@@ -18,9 +19,8 @@ python -m nodoPrimario.servidor --host localhost --puerto 9093 --backup
 ```
 Un backup no pide `s`: se queda escuchando y el primario le va empujando el
 estado (`replicar_estado`) cada vez que acepta una oferta, inicia o cierra
-la subasta. Todavia no hay eleccion (requisito 4), asi que si el primario se
-cae, los backups se quedan con el ultimo estado replicado pero nadie los
-asciende solo.
+la subasta. Si el primario se cae, los backups detectan la falta de heartbeat,
+consultan cuales siguen vivos y promueven al nodo de mayor prioridad.
 
 **3) cliente(s)** — podes abrir varios en paralelo:
 ```
@@ -41,9 +41,9 @@ comun/
   reloj_lamport.py      -> reloj logico de Lamport (requisito 5)
   protocolo.py           -> formato de los mensajes (Oferta, EstadoSubasta)
 nodoPrimario/
-  servidor.py             -> nodo (por ahora siempre primario), expone metodos via Pyro5
+  servidor.py             -> nodo que puede ser primario o backup, expone metodos via Pyro5
 cliente/
-  cliente.py                -> cliente de consola con descubrimiento por lista fija
+  cliente.py                -> cliente de consola que sigue la ubicacion del primario
 ```
 
 ## proximos pasos
@@ -56,9 +56,7 @@ cliente/
   `servidor.py`) para no colgarse si alguno esta caido — en ese caso esa
   actualizacion puntual se pierde para ese backup (se loggea la alerta de
   salto de `seq_op`, todavia no hay resync automatico).
-- deteccion de falla + algoritmo de eleccion (requisito 4) — cuando un backup
-  gane la eleccion, pone su propio `_es_primario = True` (y va a necesitar
-  armar su propia lista de `_backups` con `config.otros_nodos(...)`, algo que
-  hoy solo se hace en `__init__` cuando arranca siendo primario). El cliente
-  ya sabe reaccionar: si el nodo que tenia guardado deja de responder, vuelve
-  a recorrer la lista y lo encuentra solo.
+- deteccion de falla + algoritmo de eleccion (requisito 4) — hecho: los
+  backups detectan la falta de heartbeat y eligen al nodo vivo de mayor
+  prioridad. El cliente sigue la ubicacion informada por el cluster y vuelve
+  a suscribirse al nuevo primario cuando el anterior deja de responder.

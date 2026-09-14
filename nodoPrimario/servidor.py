@@ -2,7 +2,7 @@
 Nodo del sistema de subastas. Version "camino feliz" extendida: sigue siendo
 un unico nodo actuando de primario, pero ya:
   - escucha en una IP:puerto fija (sin name server, ver comun/config.py)
-  - expone es_primario() para que los clientes lo puedan descubrir
+    - expone ubicacion_primario() para que los clientes sigan la eleccion
   - calcula el monto en el servidor a partir de un incremento (nunca confia
     en un monto absoluto que mande el cliente)
   - reinicia la ventana de 30s con cada oferta aceptada (cierre suave)
@@ -22,7 +22,8 @@ from comun.protocolo import EstadoSubasta
 from comun import config
 
 DURACION_VENTANA_SEG = 30.0
-TIMEOUT_REPLICACION_SEG = 1.5  # cuanto espera el primario a que un backup confirme antes de saltearlo
+TIMEOUT_REPLICACION_SEG = 1.5
+INTERVALO_HEARTBEAT_SEG = 1.0
 
 
 @Pyro5.api.expose
@@ -37,15 +38,11 @@ class NodoSubasta:
         self._reloj = RelojLamport()
         self._lock = threading.Lock()
         self._seq_op= 0
-        # Recibido por parametro en vez de hardcodeado: todavia no hay
-        # eleccion, asi que el rol se fija "a mano" al arrancar el proceso
-        # (ver --backup en main). Cuando se implemente la eleccion, este
-        # valor va a depender de su resultado en vez de fijarse al inicio.
         self._es_primario = es_primario
+        self._host = host
+        self._puerto = puerto
+        self._primario = (host, puerto) if es_primario else config.NODOS[0]
 
-        # Proxies a los demas nodos del cluster, para poder replicarles el
-        # estado. Solo el primario los necesita (un backup no le replica a
-        # nadie hasta que gane una eleccion y pase a ser primario).
         self._backups = []
         if self._es_primario and host is not None and puerto is not None:
             for h, p in config.otros_nodos(host, puerto):
@@ -59,6 +56,8 @@ class NodoSubasta:
         # la cuenta regresiva) le llega replicado desde el primario.
         if self._es_primario:
             threading.Thread(target=self._vigila_cierre, daemon=True).start() # thread aparte ya que el requestLoop de Pyro es bloqueante y se queda atendiendo clientes
+        else:
+            threading.Thread(target=self._vigila_primario, daemon=True).start()
         self._ganador_anunciado = False #flag para que solo se notifique una vez el cierre de la subasta, si se hacen varias rondas se deberia resetear esta flag
 
     def iniciar_subasta(self) -> bool:
@@ -80,6 +79,56 @@ class NodoSubasta:
     def es_primario(self) -> bool:
         return self._es_primario
 
+    def ping(self) -> bool:
+        return True
+
+    def ubicacion_primario(self) -> dict:
+        with self._lock:
+            host, puerto = self._primario
+            return {"host": host, "puerto": puerto}
+
+    def _crear_backups(self):
+        self._backups = []
+        for host, puerto in config.otros_nodos(self._host, self._puerto):
+            proxy = Pyro5.api.Proxy(config.uri_de(host, puerto))
+            proxy._pyroTimeout = TIMEOUT_REPLICACION_SEG
+            self._backups.append(proxy)
+
+    def _vigila_primario(self):
+        while not self._es_primario:
+            time.sleep(INTERVALO_HEARTBEAT_SEG)
+            host, puerto = self._primario
+            proxy = Pyro5.api.Proxy(config.uri_de(host, puerto))
+            proxy._pyroTimeout = TIMEOUT_REPLICACION_SEG
+            try:
+                proxy.ping()
+            except Pyro5.errors.CommunicationError:
+                self._elegir_primario()
+
+    def _elegir_primario(self):
+        vivos = []
+        for host, puerto in config.NODOS:
+            proxy = Pyro5.api.Proxy(config.uri_de(host, puerto))
+            proxy._pyroTimeout = TIMEOUT_REPLICACION_SEG
+            try:
+                proxy.ping()
+                vivos.append((host, puerto))
+            except Pyro5.errors.CommunicationError:
+                continue
+
+        if not vivos:
+            return
+
+        elegido = max(vivos, key=lambda nodo: config.NODOS.index(nodo))
+        with self._lock:
+            self._primario = elegido
+            if elegido != (self._host, self._puerto) or self._es_primario:
+                return
+            self._es_primario = True
+            self._crear_backups()
+            print(f"[nodo] eleccion completada: nuevo primario en {elegido[0]}:{elegido[1]}")
+            threading.Thread(target=self._vigila_cierre, daemon=True).start()
+
     def _tiempo_restante(self) -> float:
         if not self._iniciada:
             return DURACION_VENTANA_SEG
@@ -87,7 +136,7 @@ class NodoSubasta:
         return max(0.0, restante)
 
     def _estado_actual(self) -> dict:
-        return EstadoSubasta(
+        estado = EstadoSubasta(
             articulo=self._articulo,
             mejor_oferta=self._mejor_oferta,
             mejor_postor=self._mejor_postor,
@@ -97,6 +146,9 @@ class NodoSubasta:
             cerrada=self._cerrada or (self._iniciada and self._tiempo_restante() <= 0),
             iniciada=self._iniciada,
         ).serializar()
+        estado["primario_host"] = self._primario[0]
+        estado["primario_puerto"] = self._primario[1]
+        return estado
 
     def ofertar(self, cliente_id: str, incremento: float, clock_cliente: int, seq_op_cliente: int) -> dict:
         """
@@ -201,6 +253,7 @@ class NodoSubasta:
             self._cerrada = estado["cerrada"]
             self._seq_op = estado["seq_op"]
             self._reloj.actualizar(estado["clock_lamport"])
+            self._primario = (estado["primario_host"], estado["primario_puerto"])
             # aproximamos "cuando arranco la ventana" a partir del tiempo
             # restante recibido, para que si este backup pasa a ser primario
             # la cuenta regresiva siga de donde iba.
