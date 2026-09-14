@@ -57,8 +57,12 @@ class ClienteCallback: #para que el server le pueda avisar al cliente cuando la 
         self.estado_local = estado_local
 
     def notificar_estado(self, estado: dict):
-        print(f"\n  [AVISO!] estado actualizado: mejor_oferta={estado['mejor_oferta']} "
-              f"cerrada={estado['cerrada']}")
+        if estado["cerrada"]:
+            print(f"\n  [SUBASTA FINALIZADA] articulo={estado['articulo']!r} "
+                  f"ganador={estado['mejor_postor']!r} monto_final={estado['mejor_oferta']}")
+        else:
+            print(f"\n  [AVISO!] estado actualizado: mejor_oferta={estado['mejor_oferta']} "
+                  f"cerrada={estado['cerrada']}")
         self.estado_local["reloj"].actualizar(estado["clock_lamport"])
         self.estado_local["seq_visto"] = estado["seq_op"]
 
