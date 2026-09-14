@@ -8,10 +8,7 @@ un unico nodo actuando de primario, pero ya:
   - reinicia la ventana de 30s con cada oferta aceptada (cierre suave)
 
 Correr:
-    python -m primario.servidor --host localhost --puerto 9091 --articulo "Cuadro"
-    
-    a mi me funciona con: 
-        python -m nodoPrimario.servidor --host localhost --puerto 9091 --articulo "Cuadro"
+    python -m nodoPrimario.servidor --host localhost --puerto 9091 --articulo "Cuadro"
 """
 
 import argparse
