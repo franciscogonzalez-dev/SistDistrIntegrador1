@@ -97,11 +97,15 @@ def main():
 
         clock_envio = reloj.tick()
         try:
+            
             respuesta = primario.ofertar(args.id, incremento, clock_envio, estado_local["seq_visto"])
         except Pyro5.errors.CommunicationError:
             print("  el nodo dejo de responder, buscando nuevo primario...")
             primario = encontrar_primario()
             primario.subscribir_cliente(str(uri_callback))
+            
+            respuesta = primario.ofertar(args.id, incremento, clock_envio, estado_local["seq_visto"])
+            
             estado_actual = primario.obtener_estado()
             reloj.actualizar(estado_actual["clock_lamport"])
             estado_local["seq_visto"] = estado_actual["seq_op"]
