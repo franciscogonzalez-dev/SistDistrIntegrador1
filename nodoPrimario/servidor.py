@@ -13,6 +13,8 @@ Correr backup:
 import argparse
 import threading
 import time
+import json
+import random
 
 import Pyro5.api
 from comun import config
@@ -22,7 +24,7 @@ from nodoPrimario.subasta import DURACION_VENTANA_SEG
 
 def main():
     parser = argparse.ArgumentParser(description="Nodo Primario / Servidor de Subastas")
-    parser.add_argument("--articulo", default="Articulo de prueba", help="Nombre del articulo a subastar")
+    parser.add_argument("--autos_json", default="autos.json", help="Ruta al JSON de autos")
     parser.add_argument("--host", default="localhost", help="Host de escucha")
     parser.add_argument("--puerto", type=int, required=True, help="Puerto de escucha")
     parser.add_argument(
@@ -33,8 +35,18 @@ def main():
     args = parser.parse_args()
 
     es_primario = not args.backup
+    
+    # Cargar autos si es primario (el backup igual lo inicializa pero recibe despues la replicacion)
+    try:
+        with open(args.autos_json, "r", encoding="utf-8") as f:
+            lista_autos = json.load(f)
+            ronda_autos = random.sample(lista_autos, min(3, len(lista_autos)))
+    except Exception as e:
+        print(f"Error cargando {args.autos_json}: {e}. Se usará un auto por defecto.")
+        ronda_autos = [{"marca": "Auto", "modelo": "Por defecto", "anio": 2000, "kilometraje": 0, "fallas_defectos": "", "imagenes": []}]
+
     nodo = NodoSubasta(
-        articulo=args.articulo,
+        ronda_autos=ronda_autos,
         es_primario=es_primario,
         host=args.host,
         puerto=args.puerto,
@@ -45,7 +57,7 @@ def main():
 
     rol = "PRIMARIO" if es_primario else "BACKUP"
     print(f"[{args.puerto}][{rol}] Nodo escuchando en {args.host}:{args.puerto} como {rol}")
-    print(f"[{args.puerto}][{rol}] Articulo: {args.articulo!r}, ventana: {DURACION_VENTANA_SEG}s")
+    print(f"[{args.puerto}][{rol}] Ronda de {len(ronda_autos)} autos lista, ventana: {DURACION_VENTANA_SEG}s")
     print(f"[{args.puerto}][{rol}] URI: {config.uri_de(args.host, args.puerto)}")
 
     hilo_daemon = threading.Thread(target=daemon.requestLoop, daemon=True)

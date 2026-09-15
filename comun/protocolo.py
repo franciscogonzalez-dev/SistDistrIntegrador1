@@ -7,9 +7,22 @@ import time
 
 
 @dataclass
+class Auto:
+    marca: str
+    modelo: str
+    anio: int
+    kilometraje: int
+    fallas_defectos: str
+    imagenes: list[str]
+
+    def serializar(self):
+        return asdict(self)
+
+
+@dataclass
 class Oferta: #todo esto es lo q manda un cliente cuando quiere ofertar
     cliente_id: str
-    articulo: str
+    articulo: dict # ahora es el dict del auto
     monto: float
     clock_lamport: int  # el cliente ya incremento su reloj antes de mandar esto
 
@@ -19,7 +32,7 @@ class Oferta: #todo esto es lo q manda un cliente cuando quiere ofertar
 
 @dataclass
 class EstadoSubasta: # lo que devuelve el nodo primario
-    articulo: str
+    articulo: dict # ahora es el dict del auto
     mejor_oferta: float # en pesos
     mejor_postor: str | None 
     tiempo_restante_seg: float

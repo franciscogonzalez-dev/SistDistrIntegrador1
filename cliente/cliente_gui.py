@@ -75,8 +75,11 @@ class ClienteSubastaGUI:
         frame_estado = ttk.LabelFrame(self.root, text="Estado de la Subasta", padding=10)
         frame_estado.pack(fill="x", padx=10, pady=5)
 
-        self.lbl_articulo = ttk.Label(frame_estado, text="Artículo: -", font=("Segoe UI", 11, "bold"))
+        self.lbl_articulo = ttk.Label(frame_estado, text="Artículo: -", font=("Segoe UI", 11, "bold"), justify="left")
         self.lbl_articulo.pack(anchor="w", pady=2)
+
+        self.lbl_transicion = ttk.Label(frame_estado, text="", font=("Segoe UI", 11, "italic"), foreground="orange")
+        self.lbl_transicion.pack(anchor="w", pady=2)
 
         self.lbl_oferta = ttk.Label(frame_estado, text="Mejor Oferta: $0.00", font=("Segoe UI", 13, "bold"), foreground="green")
         self.lbl_oferta.pack(anchor="w", pady=2)
@@ -179,7 +182,27 @@ class ClienteSubastaGUI:
         self.cerrada = nueva_cerrada
         self.seq_visto = nuevo_seq
 
-        self.lbl_articulo.config(text=f"Artículo: {estado.get('articulo', '-')}")
+        auto = estado.get('articulo', {})
+        if isinstance(auto, dict):
+            marca = auto.get("marca", "-")
+            modelo = auto.get("modelo", "-")
+            anio = auto.get("anio", "-")
+            km = auto.get("kilometraje", "-")
+            fallas = auto.get("fallas_defectos", "-")
+            imgs = auto.get("imagenes", [])
+            imgs_str = ", ".join(imgs) if imgs else "Ninguna"
+            texto_articulo = f"Auto: {marca} {modelo} ({anio})\nKM: {km} | Fallas: {fallas}\nImágenes: {imgs_str}"
+            nombre_corto = f"{marca} {modelo}"
+        else:
+            texto_articulo = f"Artículo: {auto}"
+            nombre_corto = str(auto)
+            
+        self.lbl_articulo.config(text=texto_articulo)
+        
+        # Mensaje de transicion si lo hay
+        msg_trans = estado.get("mensaje_transicion", "")
+        self.lbl_transicion.config(text=msg_trans)
+
         self.lbl_oferta.config(text=f"Mejor Oferta: ${estado.get('mejor_oferta', 0.0):.2f}")
         self.lbl_postor.config(text=f"Líder: {estado.get('mejor_postor') or 'Ninguno'}")
         self.lbl_lamport.config(text=f"Lamport: {self.reloj.valor()} | Seq: {self.seq_visto}")
@@ -195,9 +218,11 @@ class ClienteSubastaGUI:
                     self.log(f"🏁 [FINALIZADA] Ganador: {ganador} por ${estado.get('mejor_oferta', 0.0):.2f}")
                 else:
                     self.log("🏁 [FINALIZADA] La subasta finalizó sin ofertas.")
+                if msg_trans:
+                    self.log(f"⏳ {msg_trans}")
         elif self.iniciada:
             if not estaba_iniciada:
-                self.log(f"🚀 [INICIO] ¡Subasta iniciada para '{estado.get('articulo')}'! Ventana de 30s activa.")
+                self.log(f"🚀 [INICIO] ¡Subasta iniciada para '{nombre_corto}'! Ventana de 30s activa.")
             elif nuevo_seq > seq_anterior and estado.get("mejor_postor"):
                 self.log(f"📢 [NUEVA MEJOR OFERTA] ${estado.get('mejor_oferta', 0.0):.2f} ({estado.get('mejor_postor')})")
 

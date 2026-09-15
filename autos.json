@@ -1,0 +1,42 @@
+[
+  {
+    "marca": "Toyota",
+    "modelo": "Corolla",
+    "anio": 2018,
+    "kilometraje": 55000,
+    "fallas_defectos": "Detalles leves de pintura en paragolpes",
+    "imagenes": ["/img/corolla_front.jpg", "/img/corolla_back.jpg"]
+  },
+  {
+    "marca": "Ford",
+    "modelo": "Focus",
+    "anio": 2016,
+    "kilometraje": 82000,
+    "fallas_defectos": "Desgaste en asiento del conductor",
+    "imagenes": ["/img/focus1.jpg"]
+  },
+  {
+    "marca": "Volkswagen",
+    "modelo": "Golf",
+    "anio": 2019,
+    "kilometraje": 41000,
+    "fallas_defectos": "Ninguna",
+    "imagenes": ["/img/golf_gti.jpg", "/img/golf_int.jpg"]
+  },
+  {
+    "marca": "Chevrolet",
+    "modelo": "Cruze",
+    "anio": 2017,
+    "kilometraje": 67000,
+    "fallas_defectos": "Bateria para cambio proximo",
+    "imagenes": ["/img/cruze.jpg"]
+  },
+  {
+    "marca": "Peugeot",
+    "modelo": "208",
+    "anio": 2021,
+    "kilometraje": 23000,
+    "fallas_defectos": "Ninguna",
+    "imagenes": ["/img/peugeot_208.jpg", "/img/peugeot_208_2.jpg"]
+  }
+]

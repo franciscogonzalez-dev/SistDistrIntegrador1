@@ -13,8 +13,10 @@ DURACION_VENTANA_SEG = 30.0
 
 
 class GestorSubasta:
-    def __init__(self, articulo: str, duracion_ventana: float = DURACION_VENTANA_SEG):
-        self.articulo = articulo
+    def __init__(self, ronda_autos: list[dict], duracion_ventana: float = DURACION_VENTANA_SEG):
+        self.ronda_autos = ronda_autos
+        self.indice_actual = 0
+        self.articulo = ronda_autos[0] if ronda_autos else {}
         self.duracion_ventana = duracion_ventana
         self.ultimo_evento = time.time()
         self.mejor_oferta = 0.0
@@ -33,7 +35,23 @@ class GestorSubasta:
                 return False, "La subasta ya estaba iniciada."
             self.iniciada = True
             self.ultimo_evento = time.time()
-            return True, f"¡SUBASTA INICIADA! Articulo: {self.articulo!r}, ventana de {self.duracion_ventana}s activa."
+            return True, f"¡SUBASTA INICIADA! Auto: {self.articulo.get('marca')} {self.articulo.get('modelo')}, ventana de {self.duracion_ventana}s activa."
+
+    def siguiente_auto(self) -> bool:
+        """Avanza al siguiente auto en la ronda si lo hay. Retorna True si pudo avanzar, False si no hay mas autos."""
+        with self._lock:
+            if self.indice_actual + 1 < len(self.ronda_autos):
+                self.indice_actual += 1
+                self.articulo = self.ronda_autos[self.indice_actual]
+                self.mejor_oferta = 0.0
+                self.mejor_postor = None
+                self.cerrada = False
+                self.iniciada = True
+                self._ganador_anunciado = False
+                self.ultimo_evento = time.time()
+                self.seq_op += 1
+                return True
+            return False
 
     def tiempo_restante(self) -> float:
         """Calcula el tiempo restante de la ventana actual."""
@@ -167,3 +185,4 @@ class GestorSubasta:
             # para que si este backup pasa a ser primario la cuenta regresiva continue.
             if self.iniciada:
                 self.ultimo_evento = time.time() - (self.duracion_ventana - estado["tiempo_restante_seg"])
+

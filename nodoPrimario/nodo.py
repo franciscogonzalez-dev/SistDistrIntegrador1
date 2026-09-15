@@ -17,7 +17,7 @@ from backup.eleccion import MonitorEleccion
 class NodoSubasta:
     def __init__(
         self,
-        articulo: str = "Articulo de prueba",
+        ronda_autos: list[dict] = None,
         es_primario: bool = True,
         host: str = "localhost",
         puerto: int | None = None,
@@ -26,7 +26,9 @@ class NodoSubasta:
         self._puerto = puerto
         self._identificador = f"{puerto}" if puerto else "nodo"
 
-        self.subasta = GestorSubasta(articulo, duracion_ventana=DURACION_VENTANA_SEG)
+        if ronda_autos is None:
+            ronda_autos = [{"marca": "Auto", "modelo": "Prueba", "anio": 2000, "kilometraje": 0, "fallas_defectos": "", "imagenes": []}]
+        self.subasta = GestorSubasta(ronda_autos, duracion_ventana=DURACION_VENTANA_SEG)
         self.clientes = GestorClientes(identificador=self._identificador)
         self.replicador = GestorReplicacion(host, puerto) if (host and puerto) else None
         self.eleccion = MonitorEleccion(
@@ -147,6 +149,19 @@ class NodoSubasta:
                     f"Ganador: {self.subasta.mejor_postor!r} con ${self.subasta.mejor_oferta}"
                 )
                 estado = self.obtener_estado()
+                estado["mensaje_transicion"] = "Preparate para la siguiente subasta..."
                 self.clientes.notificar(estado)
                 if self.replicador:
                     self.replicador.replicar_a_backups(estado)
+                
+                print(f"[{self._puerto}][PRIMARIO][subasta] Esperando 5 segundos para la proxima subasta...")
+                time.sleep(5.0)
+
+                if self.subasta.siguiente_auto():
+                    print(f"[{self._puerto}][PRIMARIO][subasta] INICIANDO SIGUIENTE AUTO.")
+                    nuevo_estado = self.obtener_estado()
+                    self.clientes.notificar(nuevo_estado)
+                    if self.replicador:
+                        self.replicador.replicar_a_backups(nuevo_estado)
+                else:
+                    print(f"[{self._puerto}][PRIMARIO][subasta] RONDA FINALIZADA.")
