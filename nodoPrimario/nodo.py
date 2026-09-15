@@ -41,6 +41,11 @@ class NodoSubasta:
         if es_primario:
             if self.replicador:
                 self.replicador.conectar_backups()
+                # sincroniza la ronda de autos real con los backups apenas
+                # arranca, en vez de esperar a que se presione 's' o entre la
+                # primera oferta (hasta entonces cada backup mostraba su
+                # propia muestra al azar de autos.json)
+                self.replicador.replicar_a_backups(self.obtener_estado())
             self._iniciar_vigilancia_cierre()
         else:
             self.eleccion.iniciar_vigilancia()
@@ -54,6 +59,7 @@ class NodoSubasta:
         if not self.replicador:
             self.replicador = GestorReplicacion(self._host, self._puerto)
         self.replicador.conectar_backups()
+        self.replicador.replicar_a_backups(self.obtener_estado())
         self._iniciar_vigilancia_cierre()
 
     # --- Metodos expuestos a Pyro5 ---
@@ -165,3 +171,8 @@ class NodoSubasta:
                         self.replicador.replicar_a_backups(nuevo_estado)
                 else:
                     print(f"[{self._puerto}][PRIMARIO][subasta] RONDA FINALIZADA.")
+                    estado_final = self.obtener_estado()
+                    estado_final["ronda_finalizada"] = True
+                    self.clientes.notificar(estado_final)
+                    if self.replicador:
+                        self.replicador.replicar_a_backups(estado_final)

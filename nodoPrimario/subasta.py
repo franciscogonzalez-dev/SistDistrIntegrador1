@@ -106,6 +106,8 @@ class GestorSubasta:
         ).serializar()
         estado["primario_host"] = primario_host
         estado["primario_puerto"] = primario_puerto
+        estado["ronda_autos"] = self.ronda_autos
+        estado["indice_actual"] = self.indice_actual
         return estado
 
     def procesar_oferta(
@@ -180,6 +182,13 @@ class GestorSubasta:
             self.cerrada = estado["cerrada"]
             self.seq_op = estado["seq_op"]
             self.reloj.actualizar(estado["clock_lamport"])
+            # sin esto, un backup promovido a primario seguiria la ronda con
+            # SU PROPIA lista de autos (cargada al azar de autos.json al
+            # arrancar), no con la que realmente venia rematando el primario.
+            if "ronda_autos" in estado:
+                self.ronda_autos = estado["ronda_autos"]
+            if "indice_actual" in estado:
+                self.indice_actual = estado["indice_actual"]
 
             # Aproximar cuando arranco la ventana a partir del tiempo restante recibido,
             # para que si este backup pasa a ser primario la cuenta regresiva continue.

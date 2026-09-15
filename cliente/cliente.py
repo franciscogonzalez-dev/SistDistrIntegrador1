@@ -9,6 +9,7 @@ Correr:
 
 import argparse
 import threading
+import time
 
 import Pyro5.api
 import Pyro5.errors
@@ -43,9 +44,32 @@ def encontrar_primario():
             continue
     raise RuntimeError("Ningun nodo del cluster pudo indicar el primario")
 
+def reconectar_con_reintentos(intentos: int = 5, espera_seg: float = 1.0):
+    """
+    Reintenta ubicar un primario ante fallas transitorias (por ej. una
+    eleccion todavia en curso justo despues de que el primario se cayo).
+    Devuelve None si se agotaron los intentos, en vez de dejar propagar el
+    RuntimeError de encontrar_primario() y tirar abajo el cliente.
+    """
+    for intento in range(1, intentos + 1):
+        try:
+            return encontrar_primario()
+        except RuntimeError:
+            print(f"  no se encontro primario todavia (intento {intento}/{intentos}), reintentando...")
+            time.sleep(espera_seg)
+    return None
+
+def formatear_articulo(articulo) -> str:
+    if isinstance(articulo, dict):
+        marca = articulo.get("marca", "-")
+        modelo = articulo.get("modelo", "-")
+        anio = articulo.get("anio", "-")
+        return f"{marca} {modelo} ({anio})"
+    return str(articulo)
+
 def mostrar_estado(estado: dict):
     print(
-        f"  articulo={estado['articulo']!r} "
+        f"  articulo={formatear_articulo(estado['articulo'])} "
         f"mejor_oferta={estado['mejor_oferta']} "
         f"mejor_postor={estado['mejor_postor']} "
         f"tiempo_restante={estado['tiempo_restante_seg']:.1f}s "
@@ -59,8 +83,10 @@ class ClienteCallback: #para que el server le pueda avisar al cliente cuando la 
         self.estado_local = estado_local
 
     def notificar_estado(self, estado: dict):
-        if estado["cerrada"]:
-            print(f"\n  [SUBASTA FINALIZADA] articulo={estado['articulo']!r} "
+        if estado.get("ronda_finalizada"):
+            print("\n  [RONDA FINALIZADA] No quedan mas autos para subastar. ¡Gracias por participar!")
+        elif estado["cerrada"]:
+            print(f"\n  [SUBASTA FINALIZADA] articulo={formatear_articulo(estado['articulo'])} "
                   f"ganador={estado['mejor_postor']!r} monto_final={estado['mejor_oferta']}")
         else:
             print(f"\n  [AVISO!] estado actualizado: mejor_oferta={estado['mejor_oferta']} "
@@ -107,15 +133,23 @@ def main():
             respuesta = primario.ofertar(args.id, incremento, clock_envio, estado_local["seq_visto"])
         except Pyro5.errors.CommunicationError:
             print("  el nodo dejo de responder, buscando nuevo primario...")
-            primario = encontrar_primario()
-            primario.subscribir_cliente(str(uri_callback))
-            
-            respuesta = primario.ofertar(args.id, incremento, clock_envio, estado_local["seq_visto"])
-            
-            estado_actual = primario.obtener_estado()
-            reloj.actualizar(estado_actual["clock_lamport"])
-            estado_local["seq_visto"] = estado_actual["seq_op"]
-            mostrar_estado(estado_actual)
+            nuevo_primario = reconectar_con_reintentos()
+            if nuevo_primario is None:
+                print("  no se pudo ubicar un primario disponible, proba de nuevo en unos segundos.")
+                continue
+            primario = nuevo_primario
+
+            try:
+                primario.subscribir_cliente(str(uri_callback))
+                respuesta = primario.ofertar(args.id, incremento, clock_envio, estado_local["seq_visto"])
+            except Pyro5.errors.CommunicationError:
+                print("  el nuevo primario tampoco respondio, proba de nuevo en unos segundos.")
+                continue
+
+            reloj.actualizar(respuesta["estado"]["clock_lamport"])
+            estado_local["seq_visto"] = respuesta["estado"]["seq_op"]
+            print(f"  {respuesta['motivo']}")
+            mostrar_estado(respuesta["estado"])
             continue
 
         reloj.actualizar(respuesta["estado"]["clock_lamport"])
