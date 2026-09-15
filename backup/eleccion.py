@@ -58,12 +58,22 @@ class MonitorEleccion:
                     "Iniciando eleccion..."
                 )
                 self.ejecutar_eleccion()
+                
+        
+    def prioridad_nodo(self, nodo: dict) -> tuple[int, int, int]:
+        host, puerto = nodo["host"], nodo["puerto"]
+        return (
+            int(nodo.get("clock_lamport", 0)), #esto primero le da prioridad al reloj de lamport de cada replica viva
+            int(nodo.get("seq_op", 0)), #despues le da priorirdad a la seq de operacion
+            config.NODOS.index((host, puerto)), # por ultimo el index del nodo
+        )
 
     def ejecutar_eleccion(self):
         """
         Consulta todos los nodos de config.NODOS para ver cuales estan vivos.
-        Elige al nodo de mayor prioridad (mayor indice en config.NODOS).
-        Si el elegido es este nodo, se auto-promueve a primario y llama a on_promocion.
+        Elige como nuevo primario al nodo cuya ultima replica tiene el reloj de
+        Lamport mas alto; en caso de empate, usa seq_op y luego la prioridad del
+        cluster.
         """
         vivos = []
         for host, puerto in config.NODOS:
@@ -71,27 +81,39 @@ class MonitorEleccion:
             proxy._pyroTimeout = self._timeout
             try:
                 proxy.ping()
-                vivos.append((host, puerto))
-            except Pyro5.errors.CommunicationError:
+                estado = proxy.obtener_estado()
+                vivos.append(
+                    {
+                        "host": host,
+                        "puerto": puerto,
+                        "clock_lamport": int(estado.get("clock_lamport", 0)),
+                        "seq_op": int(estado.get("seq_op", 0)),
+                    }
+                )
+            except (Pyro5.errors.CommunicationError, AttributeError, TypeError, ValueError):
                 continue
 
         if not vivos:
             return
 
-        elegido = max(vivos, key=lambda nodo: config.NODOS.index(nodo))
+        elegido = max(vivos, key=lambda nodo: self.prioridad_nodo(nodo))
+        nodo_elegido = (elegido["host"], elegido["puerto"])
+
         with self._lock:
-            self._primario = elegido
-            if elegido != (self._host, self._puerto) or self._es_primario:
+            self._primario = nodo_elegido
+            if nodo_elegido != (self._host, self._puerto) or self._es_primario:
                 print(
                     f"[{self._puerto}][BACKUP][eleccion] Eleccion completada: "
-                    f"nuevo primario en {elegido[0]}:{elegido[1]}"
+                    f"nuevo primario en {nodo_elegido[0]}:{nodo_elegido[1]} "
+                    f"(clock_lamport={elegido['clock_lamport']}, seq_op={elegido['seq_op']})"
                 )
                 return
             self._es_primario = True
 
         print(
             f"[{self._puerto}][PRIMARIO][eleccion] Eleccion completada: "
-            f"¡Este nodo ({self._host}:{self._puerto}) fue electo nuevo primario!"
+            f"¡Este nodo ({self._host}:{self._puerto}) fue electo nuevo primario! "
+            f"(clock_lamport={elegido['clock_lamport']}, seq_op={elegido['seq_op']})"
         )
         if self._on_promocion:
             self._on_promocion()
