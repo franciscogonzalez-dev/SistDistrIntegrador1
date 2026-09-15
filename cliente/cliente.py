@@ -17,6 +17,7 @@ from comun.reloj_lamport import RelojLamport
 from comun import config
 
 TIMEOUT_DESCUBRIMIENTO_SEG = 1.5
+TIMEOUT_OPERACION_SEG = 6.0
 
 
 OPCIONES_OFERTA = {
@@ -35,6 +36,7 @@ def encontrar_primario():
             primario = Pyro5.api.Proxy(config.uri_de(ubicacion["host"], ubicacion["puerto"]))
             primario._pyroTimeout = TIMEOUT_DESCUBRIMIENTO_SEG
             primario.obtener_estado()
+            primario._pyroTimeout = TIMEOUT_OPERACION_SEG
             print(f"  primario indicado por el cluster en {ubicacion['host']}:{ubicacion['puerto']}")
             return primario
         except Pyro5.errors.CommunicationError:
