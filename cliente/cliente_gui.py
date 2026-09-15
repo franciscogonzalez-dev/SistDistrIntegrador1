@@ -33,6 +33,7 @@ class ClienteSubastaGUI:
         self.uri_callback = None
         self.iniciada = False
         self.cerrada = False
+        self.ronda_finalizada = False
         self.tiempo_restante_servidor = 0.0
         self.tiempo_actualizacion = 0.0
 
@@ -211,7 +212,13 @@ class ClienteSubastaGUI:
         for btn in self.btn_ofertas:
             btn.config(state="normal" if subasta_activa else "disabled")
 
-        if self.cerrada:
+        if estado.get("ronda_finalizada"):
+            if not self.ronda_finalizada:
+                self.log("🏆 [RONDA FINALIZADA] No quedan más autos para subastar. ¡Gracias por participar!")
+                for btn in self.btn_ofertas:
+                    btn.config(state="disabled")
+            self.ronda_finalizada = True
+        elif self.cerrada:
             if not estaba_cerrada:
                 ganador = estado.get("mejor_postor")
                 if ganador:
