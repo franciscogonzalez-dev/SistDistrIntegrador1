@@ -10,9 +10,9 @@ en vez de asumir que siempre es el primero.
 """
 
 NODOS = [
-    ("localhost", 9091),
-    ("localhost", 9092),
-    ("localhost", 9093),
+    ("10.52.148.33", 9091),
+    ("10.52.148.183", 9092),
+    ("10.52.148.32", 9093),
 ]
 
 # Nombre de objeto Pyro fijo e igual en todos los nodos. Al ser siempre el
