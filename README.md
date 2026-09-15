@@ -10,13 +10,13 @@ python -m nodoPrimario.servidor --host localhost --puerto 9091 --articulo "aceit
 ```
 Cuando arranca, el nodo espera que apretes `s` + Enter para iniciar la subasta.
 
-**2) backups** (opcional, para probar la replicacion — mismo `--articulo`
-para que arranquen todos del mismo lado, y usan los puertos que ya estan en
-`comun/config.py`):
+**2) backups** (opcional, para probar la replicacion — usan los puertos definidos en `comun/config.py`):
 ```
-python -m nodoPrimario.servidor --host localhost --puerto 9092 --backup
-python -m nodoPrimario.servidor --host localhost --puerto 9093 --backup
+python -m backup.servidor --puerto 9092
+python -m backup.servidor --puerto 9093
 ```
+*(Tambien podes seguir usando `python -m nodoPrimario.servidor --puerto 9092 --backup` por compatibilidad).*
+
 Un backup no pide `s`: se queda escuchando y el primario le va empujando el
 estado (`replicar_estado`) cada vez que acepta una oferta, inicia o cierra
 la subasta. Si el primario se cae, los backups detectan la falta de heartbeat,
@@ -27,6 +27,7 @@ consultan cuales siguen vivos y promueven al nodo de mayor prioridad.
 python -m cliente.cliente --id alfredo
 python -m cliente.cliente --id pablo rosales
 ```
+(O usar la interfaz grafica: `python -m cliente.cliente_gui`)
 
 cada cliente te va a pedir un **incremento** (no un monto absoluto). El
 monto final siempre lo calcula el nodo: `mejor_oferta_actual + incremento`.
@@ -38,12 +39,20 @@ aceptada; si nadie oferta en 30s, cierra y gana el ultimo postor.
 ```
 comun/
   config.py            -> lista fija de nodos del cluster + construccion de URIs
-  reloj_lamport.py      -> reloj logico de Lamport (requisito 5)
-  protocolo.py           -> formato de los mensajes (Oferta, EstadoSubasta)
+  reloj_lamport.py     -> reloj logico de Lamport (requisito 5)
+  protocolo.py         -> formato de los mensajes (Oferta, EstadoSubasta)
 nodoPrimario/
-  servidor.py             -> nodo que puede ser primario o backup, expone metodos via Pyro5
+  subasta.py           -> logica pura del negocio (ofertas, tiempos, reloj, seq_op)
+  clientes.py          -> suscripcion de clientes y notificaciones push
+  nodo.py              -> fachada orquestadora expuesta via Pyro5
+  servidor.py          -> entrypoint de consola para el nodo primario
+backup/
+  replicacion.py       -> sincronizacion y verificacion de estado primario-backup
+  eleccion.py          -> heartbeat de deteccion de fallas y algoritmo de eleccion
+  servidor.py          -> entrypoint de consola para los nodos backup
 cliente/
-  cliente.py                -> cliente de consola que sigue la ubicacion del primario
+  cliente.py           -> cliente de consola que sigue la ubicacion del primario
+  cliente_gui.py       -> cliente con interfaz grafica (Tkinter)
 ```
 
 ## proximos pasos
