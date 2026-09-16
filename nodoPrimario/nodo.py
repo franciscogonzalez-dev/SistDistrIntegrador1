@@ -203,6 +203,12 @@ class NodoSubasta:
         if self.es_primario() and self.replicador:
             self.replicador.replicar_a_backups(self.obtener_estado())
 
+    def desubscribir_cliente(self, uri_cliente: str):
+        """Registra la salida de un cliente y remueve su suscripcion push."""
+        self.clientes.desubscribir(uri_cliente)
+        if self.es_primario() and self.replicador:
+            self.replicador.replicar_a_backups(self.obtener_estado())
+
     def _vigila_cierre(self):
         """Hilo periodico que revisa si se cumplio la ventana de 30s sin nuevas ofertas."""
         while True:

@@ -29,6 +29,16 @@ class GestorClientes:
                 pass
         print(f"[{self.identificador}][clientes] Un cliente se unio a la sala: {uri_cliente}")
 
+    def desubscribir(self, uri_cliente: str):
+        # Remueve al cliente de la lista y de las URIs registradas.
+        with self._lock:
+            self._uris.discard(uri_cliente)
+            for proxy in self._clientes:
+                if str(proxy._pyroUri) == uri_cliente:
+                    self._clientes.remove(proxy)
+                    break
+        print(f"[{self.identificador}][clientes] Un cliente abandono la sala: {uri_cliente}")
+
     def sincronizar_uris(self, uris: list[str]):
         """Sincroniza los clientes a partir de la lista de URIs replicada."""
         if not uris:
