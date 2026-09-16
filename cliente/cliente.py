@@ -8,6 +8,7 @@ Correr:
 """
 
 import argparse
+import socket
 import threading
 import time
 
@@ -26,6 +27,17 @@ OPCIONES_OFERTA = {
     "2": 250.0,
     "3": 500.0,
 }
+
+
+def obtener_mi_ip(host_destino: str, puerto_destino: int = 9091) -> str:
+    """Detecta automaticamente la IP local de esta maquina con salida hacia host_destino."""
+    try:
+        puerto = int(puerto_destino) if puerto_destino else 9091
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect((host_destino, puerto))
+            return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
 
 def encontrar_primario():
     """Busca el nodo primario activo en el cluster."""
@@ -171,7 +183,8 @@ def main():
         print("No se encontro ningun nodo primario disponible.")
         return
     
-    daemon_cliente = Pyro5.api.Daemon()
+    mi_ip = obtener_mi_ip(primario._pyroUri.host, primario._pyroUri.port)
+    daemon_cliente = Pyro5.api.Daemon(host=mi_ip)
     callback = ClienteCallback(estado_local, cliente_id=args.id)
     uri_callback = daemon_cliente.register(callback)
     threading.Thread(target=daemon_cliente.requestLoop, daemon=True).start()

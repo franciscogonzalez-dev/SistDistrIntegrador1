@@ -9,10 +9,11 @@ podria terminar siendo el primario, por eso el cliente los recorre a todos
 en vez de asumir que siempre es el primero.
 """
 
+
 NODOS = [
-    ("127.0.0.1", 9091),
-    ("127.0.0.1", 9092),
-    ("127.0.0.1", 9093),
+    ("10.122.240.32", 9091),
+    ("10.122.240.206", 9092),
+    ("10.122.240.33", 9093),
 ]
 
 # Nombre de objeto Pyro fijo e igual en todos los nodos. Al ser siempre el
