@@ -17,7 +17,7 @@ import Pyro5.errors
 from comun.reloj_lamport import RelojLamport
 from comun import config
 
-TIMEOUT_DESCUBRIMIENTO_SEG = 1.5
+TIMEOUT_DESCUBRIMIENTO_SEG = 0.8
 TIMEOUT_OPERACION_SEG = 6.0
 
 
@@ -28,7 +28,20 @@ OPCIONES_OFERTA = {
 }
 
 def encontrar_primario():
-    """Pide a un nodo vivo la ubicacion decidida por el cluster."""
+    """Busca el nodo primario activo en el cluster."""
+    # 1. Intentar encontrar un nodo que afirme ser primario y responda
+    for host, puerto in config.NODOS:
+        nodo = Pyro5.api.Proxy(config.uri_de(host, puerto))
+        nodo._pyroTimeout = TIMEOUT_DESCUBRIMIENTO_SEG
+        try:
+            if nodo.es_primario():
+                nodo.obtener_estado()
+                nodo._pyroTimeout = TIMEOUT_OPERACION_SEG
+                return nodo
+        except Exception:
+            continue
+
+    # 2. Si ninguno afirmo ser primario de forma directa, consultar a los vivos quien es el primario
     for host, puerto in config.NODOS:
         nodo = Pyro5.api.Proxy(config.uri_de(host, puerto))
         nodo._pyroTimeout = TIMEOUT_DESCUBRIMIENTO_SEG
@@ -36,26 +49,25 @@ def encontrar_primario():
             ubicacion = nodo.ubicacion_primario()
             primario = Pyro5.api.Proxy(config.uri_de(ubicacion["host"], ubicacion["puerto"]))
             primario._pyroTimeout = TIMEOUT_DESCUBRIMIENTO_SEG
-            primario.obtener_estado()
-            primario._pyroTimeout = TIMEOUT_OPERACION_SEG
-            print(f"  primario indicado por el cluster en {ubicacion['host']}:{ubicacion['puerto']}")
-            return primario
-        except Pyro5.errors.CommunicationError:
+            if primario.es_primario():
+                primario.obtener_estado()
+                primario._pyroTimeout = TIMEOUT_OPERACION_SEG
+                return primario
+        except Exception:
             continue
+
     raise RuntimeError("Ningun nodo del cluster pudo indicar el primario")
 
-def reconectar_con_reintentos(intentos: int = 5, espera_seg: float = 1.0):
+def reconectar_con_reintentos(intentos: int = 10, espera_seg: float = 0.5):
     """
     Reintenta ubicar un primario ante fallas transitorias (por ej. una
     eleccion todavia en curso justo despues de que el primario se cayo).
-    Devuelve None si se agotaron los intentos, en vez de dejar propagar el
-    RuntimeError de encontrar_primario() y tirar abajo el cliente.
+    Devuelve None si se agotaron los intentos.
     """
     for intento in range(1, intentos + 1):
         try:
             return encontrar_primario()
         except RuntimeError:
-            print(f"  no se encontro primario todavia (intento {intento}/{intentos}), reintentando...")
             time.sleep(espera_seg)
     return None
 
@@ -73,12 +85,12 @@ def mostrar_estado(estado: dict):
         f"mejor_oferta={estado['mejor_oferta']} "
         f"mejor_postor={estado['mejor_postor']} "
         f"tiempo_restante={estado['tiempo_restante_seg']:.1f}s "
-        f"secuencia_operacion={estado['seq_op']} " #debug, nose si lo dejamos para la muestra
+        f"secuencia_operacion={estado['seq_op']} "
         f"cerrada={estado['cerrada']}"
     )
 
 @Pyro5.api.expose
-class ClienteCallback: #para que el server le pueda avisar al cliente cuando la subasta se cierra o cuando hay una nueva mejor oferta
+class ClienteCallback: # para que el server le pueda avisar al cliente cuando la subasta se cierra o cuando hay una nueva mejor oferta
     def __init__(self, estado_local: dict):
         self.estado_local = estado_local
 
@@ -103,18 +115,20 @@ def main():
     estado_local = {"reloj": reloj, "seq_visto": 0}
 
     print("Buscando nodo primario...")
-    primario = encontrar_primario()
+    primario = reconectar_con_reintentos()
+    if primario is None:
+        print("No se encontro ningun nodo primario disponible.")
+        return
     
-    daemon_cliente = Pyro5.api.Daemon() #daemon para que el server pueda llamar al cliente y avisarle cuando la subasta se cierra
+    daemon_cliente = Pyro5.api.Daemon()
     callback = ClienteCallback(estado_local)
     uri_callback = daemon_cliente.register(callback)
     threading.Thread(target=daemon_cliente.requestLoop, daemon=True).start()
     primario.subscribir_cliente(str(uri_callback))
 
-
     print(f"Cliente {args.id!r} conectado. Estado inicial:")
     estado_inicial = primario.obtener_estado()
-    estado_local["seq_visto"] = estado_inicial["seq_op"] #nro de operacion que se ve al conectarse
+    estado_local["seq_visto"] = estado_inicial["seq_op"]
     mostrar_estado(estado_inicial)
 
     while True:
@@ -126,13 +140,16 @@ def main():
             continue
 
         incremento = OPCIONES_OFERTA[entrada]
-
         clock_envio = reloj.tick()
+
         try:
-            
+            if primario:
+                primario._pyroClaimOwnership()
             respuesta = primario.ofertar(args.id, incremento, clock_envio, estado_local["seq_visto"])
-        except Pyro5.errors.CommunicationError:
-            print("  el nodo dejo de responder, buscando nuevo primario...")
+            if not respuesta.get("aceptada") and "backup" in respuesta.get("motivo", "").lower():
+                raise Pyro5.errors.CommunicationError("Nodo respondio como backup")
+        except (Pyro5.errors.CommunicationError, Pyro5.errors.PyroError):
+            print("  el primario no respondio o cambio de rol, buscando nuevo primario...")
             nuevo_primario = reconectar_con_reintentos()
             if nuevo_primario is None:
                 print("  no se pudo ubicar un primario disponible, proba de nuevo en unos segundos.")
@@ -140,17 +157,17 @@ def main():
             primario = nuevo_primario
 
             try:
+                primario._pyroClaimOwnership()
                 primario.subscribir_cliente(str(uri_callback))
+                # Sincronizar estado y reintentar la oferta automaticamente
+                nuevo_estado = primario.obtener_estado()
+                estado_local["seq_visto"] = nuevo_estado["seq_op"]
+                reloj.actualizar(nuevo_estado["clock_lamport"])
+                clock_envio = reloj.tick()
                 respuesta = primario.ofertar(args.id, incremento, clock_envio, estado_local["seq_visto"])
-            except Pyro5.errors.CommunicationError:
-                print("  el nuevo primario tampoco respondio, proba de nuevo en unos segundos.")
+            except Exception as e:
+                print(f"  error al reintentar oferta en nuevo primario: {e}")
                 continue
-
-            reloj.actualizar(respuesta["estado"]["clock_lamport"])
-            estado_local["seq_visto"] = respuesta["estado"]["seq_op"]
-            print(f"  {respuesta['motivo']}")
-            mostrar_estado(respuesta["estado"])
-            continue
 
         reloj.actualizar(respuesta["estado"]["clock_lamport"])
         estado_local["seq_visto"] = respuesta["estado"]["seq_op"] 

@@ -19,7 +19,7 @@ from nodoPrimario.nodo import NodoSubasta
 def main():
     parser = argparse.ArgumentParser(description="Nodo Backup del sistema de subastas")
     parser.add_argument("--puerto", type=int, required=True, help="Puerto donde escucha este nodo backup")
-    parser.add_argument("--host", default="localhost", help="Host donde escucha este nodo backup")
+    parser.add_argument("--host", default="127.0.0.1", help="Host donde escucha este nodo backup")
     parser.add_argument("--autos_json", default="autos.json", help="JSON opcional para inicializar la ronda local del backup")
     args = parser.parse_args()
 

@@ -1,71 +1,69 @@
 
-ya no hay name server: cada nodo escucha en una IP:puerto fija, definida en
-`comun/config.py` (por defecto, 3 direcciones en localhost). Los nodos hacen
-la eleccion del primario; el cliente solo consulta la ubicacion que le indica
-un nodo vivo.
 
-**1) primario inicial** (el nodo que arranca sin `--backup`):
-```
-python -m nodoPrimario.servidor --host localhost --puerto 9091 --articulo "aceituna"
-```
-Cuando arranca, el nodo espera que apretes `s` + Enter para iniciar la subasta.
+## Arquitectura y Funcionamiento
+- Los nodos monitorizan al primario con heartbeats periódicos. Si el primario cae, ejecutan una elección concurrente eligiendo al nodo con mayor secuencia de operación (`seq_op`), mayor reloj de `Lamport` y desempate por índice.
+- Si cae el primario original (9091) y luego el nodo promovido (9092), el último nodo restante (9093) asume la subasta en solitario sin colgarse.
+- Si un nodo previamente caído (por ejemplo, el 9091) se vuelve a levantar, detecta automáticamente la existencia de un primario activo en el cluster, sincroniza su estado y se incorpora de inmediato como **RÉPLICA DISPONIBLE** (sin interrumpir la subasta ni pedir confirmación).
+- Tanto el cliente de consola como el cliente gráfico (`cliente_gui`) detectan caídas en tiempo real, se reconectan al nuevo primario con reintentos automáticos, sincronizan su secuencia de operación y reenvían cualquier oferta en vuelo sin que el usuario sufra interrupciones.
+- Las listas de clientes suscritos a notificaciones push se replican entre nodos, de modo que el nuevo primario sigue notificando a todos los clientes inmediatamente tras ser promovido.
 
-**2) backups** (opcional, para probar la replicacion — usan los puertos definidos en `comun/config.py`):
+
+### 1) Arrancar los Nodos del Cluster
+
+**Nodo 1 (Puerto 9091):**
+```bash
+python -m nodoPrimario.servidor --puerto 9091
 ```
+*Si es el primer nodo en arrancar el sistema, esperará que presiones `s` + Enter para iniciar la subasta. Si se levanta cuando ya hay una subasta en curso en otro nodo, se unirá automáticamente como réplica.*
+
+**Nodo 2 (Puerto 9092 - Backup):**
+```bash
 python -m backup.servidor --puerto 9092
+```
+
+**Nodo 3 (Puerto 9093 - Backup):**
+```bash
 python -m backup.servidor --puerto 9093
 ```
-*(Tambien podes seguir usando `python -m nodoPrimario.servidor --puerto 9092 --backup` por compatibilidad).*
 
-Un backup no pide `s`: se queda escuchando y el primario le va empujando el
-estado (`replicar_estado`) cada vez que acepta una oferta, inicia o cierra
-la subasta. Si el primario se cae, los backups detectan la falta de heartbeat,
-consultan cuales siguen vivos y promueven al nodo de mayor prioridad.
+*(También es compatible `python -m nodoPrimario.servidor --puerto 9092 --backup`).*
 
-**3) cliente(s)** — podes abrir varios en paralelo:
+---
+
+### 2) Conectar Clientes
+
+Podes abrir múltiples clientes en paralelo:
+
+**Cliente con Interfaz Gráfica (Tkinter):**
+```bash
+python -m cliente.cliente_gui
 ```
-python -m cliente.cliente --id alfredo
-python -m cliente.cliente --id pablo rosales
+
+**Cliente de Consola:**
+```bash
+python -m cliente.cliente --id ana
+python -m cliente.cliente --id carlos
 ```
-(O usar la interfaz grafica: `python -m cliente.cliente_gui`)
 
-cada cliente te va a pedir un **incremento** (no un monto absoluto). El
-monto final siempre lo calcula el nodo: `mejor_oferta_actual + incremento`.
-La subasta tiene una ventana de 30 segundos que se reinicia con cada oferta
-aceptada; si nadie oferta en 30s, cierra y gana el ultimo postor.
+---
 
-## estructura
+## 📁 Estructura del Proyecto
 
 ```
 comun/
-  config.py            -> lista fija de nodos del cluster + construccion de URIs
-  reloj_lamport.py     -> reloj logico de Lamport (requisito 5)
-  protocolo.py         -> formato de los mensajes (Oferta, EstadoSubasta)
+  config.py            -> Lista de nodos del cluster (IP/puertos) y construcción de URIs.
+  protocolo.py         -> Modelos y dataclasses (Oferta, EstadoSubasta, RespuestaOferta).
+  reloj_lamport.py     -> Reloj lógico de Lamport para ordenamiento de eventos.
 nodoPrimario/
-  subasta.py           -> logica pura del negocio (ofertas, tiempos, reloj, seq_op)
-  clientes.py          -> suscripcion de clientes y notificaciones push
-  nodo.py              -> fachada orquestadora expuesta via Pyro5
-  servidor.py          -> entrypoint de consola para el nodo primario
+  subasta.py           -> Lógica del negocio (gestión de ofertas, autos, temporizador de 30s).
+  clientes.py          -> Gestión y persistencia de suscripciones de clientes push.
+  nodo.py              -> Fachada Pyro5, auto-detección de rol y despacho de operaciones.
+  servidor.py          -> Punto de entrada del nodo (primario inicial o réplica viva).
 backup/
-  replicacion.py       -> sincronizacion y verificacion de estado primario-backup
-  eleccion.py          -> heartbeat de deteccion de fallas y algoritmo de eleccion
-  servidor.py          -> entrypoint de consola para los nodos backup
+  eleccion.py          -> Heartbeat de vigilancia y algoritmo de elección concurrente.
+  replicacion.py       -> Replicación concurrente y no bloqueante de estado.
+  servidor.py          -> Punto de entrada para nodos backup.
 cliente/
-  cliente.py           -> cliente de consola que sigue la ubicacion del primario
-  cliente_gui.py       -> cliente con interfaz grafica (Tkinter)
+  cliente.py           -> Cliente de consola con reconexión y reintento automático.
+  cliente_gui.py       -> Cliente gráfico (Tkinter) con failover transparente.
 ```
-
-## proximos pasos
-
-- ~~agregar backups que repliquen el estado (requisito 3)~~ — hecho: el
-  primario le replica el estado a cada backup (`replicar_estado`) despues de
-  cada oferta aceptada, de iniciar o de cerrar la subasta. Es replicacion
-  **sincronica**: el primario llama a los backups antes de responderle al
-  cliente, pero con un timeout corto (`TIMEOUT_REPLICACION_SEG` en
-  `servidor.py`) para no colgarse si alguno esta caido — en ese caso esa
-  actualizacion puntual se pierde para ese backup (se loggea la alerta de
-  salto de `seq_op`, todavia no hay resync automatico).
-- deteccion de falla + algoritmo de eleccion (requisito 4) — hecho: los
-  backups detectan la falta de heartbeat y eligen al nodo vivo de mayor
-  prioridad. El cliente sigue la ubicacion informada por el cluster y vuelve
-  a suscribirse al nuevo primario cuando el anterior deja de responder.

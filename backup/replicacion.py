@@ -9,7 +9,7 @@ import Pyro5.api
 import Pyro5.errors
 from comun import config
 
-TIMEOUT_REPLICACION_SEG = 1.5
+TIMEOUT_REPLICACION_SEG = 0.8
 
 
 class GestorReplicacion:
@@ -36,44 +36,17 @@ class GestorReplicacion:
                 f"[{self._puerto}][PRIMARIO][replicacion] Backup {proxy._pyroUri} replicado correctamente "
                 f"(seq_op={estado['seq_op']})"
             )
-        except Pyro5.errors.CommunicationError:
-            print(
-                f"[{self._puerto}][PRIMARIO][replicacion] Backup {proxy._pyroUri} no respondio, "
-                f"se sigue sin el (seq_op={estado['seq_op']})"
-            )
+        except (Pyro5.errors.CommunicationError, Pyro5.errors.PyroError):
+            pass
 
     def replicar_a_backups(self, estado: dict):
         """
-        Replica el estado a al menos un backup en forma sincrónica para no bloquear
-        el flujo principal de la subasta, y manda el resto en background para que la
-        operacion siga sin esperar a cada nodo vivo.
+        Replica el estado a todos los backups de forma concurrente para no bloquear
+        el flujo principal de la subasta, aun cuando uno o todos los backups esten caidos.
         """
         if not self._backups:
             return
 
-        for proxy in self._backups:
-            try:
-                proxy._pyroClaimOwnership()
-                proxy.replicar_estado(estado)
-                print(
-                    f"[{self._puerto}][PRIMARIO][replicacion] Replica confirmada en {proxy._pyroUri} "
-                    f"(seq_op={estado['seq_op']})"
-                )
-                for proxy_restante in self._backups:
-                    if proxy_restante is proxy:
-                        continue
-                    hilo = threading.Thread(
-                        target=self._replicar_un_backup,
-                        args=(proxy_restante, estado),
-                        daemon=True,
-                    )
-                    hilo.start()
-                return
-            except Pyro5.errors.CommunicationError:
-                continue
-
-        # Si ninguno respondio, igual mandamos la replicacion a todos en background
-        # para intentar converger sin bloquear la subasta.
         for proxy in self._backups:
             hilo = threading.Thread(
                 target=self._replicar_un_backup,

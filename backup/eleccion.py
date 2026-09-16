@@ -11,8 +11,8 @@ import Pyro5.api
 import Pyro5.errors
 from comun import config
 
-INTERVALO_HEARTBEAT_SEG = 1.0
-TIMEOUT_PING_SEG = 1.5
+INTERVALO_HEARTBEAT_SEG = 0.5
+TIMEOUT_PING_SEG = 0.8
 
 
 class MonitorEleccion:
@@ -22,6 +22,7 @@ class MonitorEleccion:
         puerto: int,
         es_primario: bool,
         on_promocion: Callable[[], None] | None = None,
+        obtener_estado_local: Callable[[], tuple[int, int]] | None = None,
         intervalo_heartbeat: float = INTERVALO_HEARTBEAT_SEG,
         timeout: float = TIMEOUT_PING_SEG,
     ):
@@ -30,10 +31,12 @@ class MonitorEleccion:
         self._es_primario = es_primario
         self._primario = (host, puerto) if es_primario else config.NODOS[0]
         self._on_promocion = on_promocion
+        self._obtener_estado_local = obtener_estado_local
         self._intervalo = intervalo_heartbeat
         self._timeout = timeout
         self._lock = threading.Lock()
         self._hilo_vigilancia: threading.Thread | None = None
+        self._en_eleccion = False
 
     def iniciar_vigilancia(self):
         """Inicia el hilo de monitoreo continuo si el nodo arranca como backup."""
@@ -46,83 +49,145 @@ class MonitorEleccion:
         while not self.es_primario():
             time.sleep(self._intervalo)
             with self._lock:
+                if self._es_primario:
+                    break
                 host_p, puerto_p = self._primario
+
+            # Si el primario guardado soy yo mismo, no hay nada que pinguear
+            if (host_p, puerto_p) == (self._host, self._puerto):
+                continue
 
             proxy = Pyro5.api.Proxy(config.uri_de(host_p, puerto_p))
             proxy._pyroTimeout = self._timeout
             try:
                 proxy.ping()
-            except Pyro5.errors.CommunicationError:
+            except (Pyro5.errors.CommunicationError, Pyro5.errors.PyroError):
                 print(
                     f"[{self._puerto}][BACKUP][eleccion] Primario en {host_p}:{puerto_p} no responde. "
                     "Iniciando eleccion..."
                 )
                 self.ejecutar_eleccion()
-                
-        
+
     def prioridad_nodo(self, nodo: dict) -> tuple[int, int, int]:
         host, puerto = nodo["host"], nodo["puerto"]
+        idx = config.NODOS.index((host, puerto)) if (host, puerto) in config.NODOS else 0
         return (
-            int(nodo.get("clock_lamport", 0)), #esto primero le da prioridad al reloj de lamport de cada replica viva
-            int(nodo.get("seq_op", 0)), #despues le da priorirdad a la seq de operacion
-            config.NODOS.index((host, puerto)), # por ultimo el index del nodo
+            int(nodo.get("seq_op", 0)),          # Prioridad principal: replica mas actualizada en subasta
+            int(nodo.get("clock_lamport", 0)),   # Reloj de Lamport
+            idx,                                 # Desempate determinista por indice
         )
 
     def ejecutar_eleccion(self):
         """
         Consulta todos los nodos de config.NODOS para ver cuales estan vivos.
-        Elige como nuevo primario al nodo cuya ultima replica tiene el reloj de
-        Lamport mas alto; en caso de empate, usa seq_op y luego la prioridad del
-        cluster.
+        Elige como nuevo primario al nodo cuya ultima replica tiene seq_op y reloj de
+        Lamport mas alto; en caso de empate, usa la prioridad del cluster.
         """
-        vivos = []
-        for host, puerto in config.NODOS:
-            proxy = Pyro5.api.Proxy(config.uri_de(host, puerto))
-            proxy._pyroTimeout = self._timeout
-            try:
-                proxy.ping()
-                estado = proxy.obtener_estado()
-                vivos.append(
-                    {
-                        "host": host,
-                        "puerto": puerto,
-                        "clock_lamport": int(estado.get("clock_lamport", 0)),
-                        "seq_op": int(estado.get("seq_op", 0)),
-                    }
-                )
-            except (Pyro5.errors.CommunicationError, AttributeError, TypeError, ValueError):
-                continue
-
-        if not vivos:
-            return
-
-        elegido = max(vivos, key=lambda nodo: self.prioridad_nodo(nodo))
-        nodo_elegido = (elegido["host"], elegido["puerto"])
-
         with self._lock:
-            self._primario = nodo_elegido
-            if nodo_elegido != (self._host, self._puerto) or self._es_primario:
-                print(
-                    f"[{self._puerto}][BACKUP][eleccion] Eleccion completada: "
-                    f"nuevo primario en {nodo_elegido[0]}:{nodo_elegido[1]} "
-                    f"(clock_lamport={elegido['clock_lamport']}, seq_op={elegido['seq_op']})"
-                )
+            if self._en_eleccion:
                 return
-            self._es_primario = True
+            self._en_eleccion = True
 
-        print(
-            f"[{self._puerto}][PRIMARIO][eleccion] Eleccion completada: "
-            f"¡Este nodo ({self._host}:{self._puerto}) fue electo nuevo primario! "
-            f"(clock_lamport={elegido['clock_lamport']}, seq_op={elegido['seq_op']})"
-        )
-        if self._on_promocion:
-            self._on_promocion()
+        try:
+            vivos = []
+            lock_vivos = threading.Lock()
+            threads = []
+
+            # Estado local del propio nodo (sin necesidad de RPC a sí mismo)
+            clock_propio = 0
+            seq_propio = 0
+            if self._obtener_estado_local:
+                clock_propio, seq_propio = self._obtener_estado_local()
+
+            vivos.append(
+                {
+                    "host": self._host,
+                    "puerto": self._puerto,
+                    "clock_lamport": clock_propio,
+                    "seq_op": seq_propio,
+                }
+            )
+
+            def consultar_nodo(h: str, p: int):
+                try:
+                    proxy = Pyro5.api.Proxy(config.uri_de(h, p))
+                    proxy._pyroTimeout = self._timeout
+                    proxy.ping()
+                    estado = proxy.obtener_estado()
+                    with lock_vivos:
+                        vivos.append(
+                            {
+                                "host": h,
+                                "puerto": p,
+                                "clock_lamport": int(estado.get("clock_lamport", 0)),
+                                "seq_op": int(estado.get("seq_op", 0)),
+                            }
+                        )
+                except Exception:
+                    pass
+
+            for host, puerto in config.NODOS:
+                if (host, puerto) == (self._host, self._puerto):
+                    continue
+                t = threading.Thread(target=consultar_nodo, args=(host, puerto), daemon=True)
+                threads.append(t)
+                t.start()
+
+            for t in threads:
+                t.join(timeout=self._timeout + 0.2)
+
+            if not vivos:
+                return
+
+            elegido = max(vivos, key=lambda nodo: self.prioridad_nodo(nodo))
+            nodo_elegido = (elegido["host"], elegido["puerto"])
+
+            con_promocion = False
+            with self._lock:
+                self._primario = nodo_elegido
+                if nodo_elegido == (self._host, self._puerto):
+                    if not self._es_primario:
+                        self._es_primario = True
+                        con_promocion = True
+                        print(
+                            f"[{self._puerto}][PRIMARIO][eleccion] Eleccion completada: "
+                            f"¡Este nodo ({self._host}:{self._puerto}) fue electo nuevo primario! "
+                            f"(seq_op={elegido['seq_op']}, clock_lamport={elegido['clock_lamport']})"
+                        )
+                else:
+                    print(
+                        f"[{self._puerto}][BACKUP][eleccion] Eleccion completada: "
+                        f"nuevo primario en {nodo_elegido[0]}:{nodo_elegido[1]} "
+                        f"(seq_op={elegido['seq_op']}, clock_lamport={elegido['clock_lamport']})"
+                    )
+
+            if con_promocion and self._on_promocion:
+                self._on_promocion()
+        finally:
+            with self._lock:
+                self._en_eleccion = False
 
     def ubicacion_primario(self) -> dict:
-        """Devuelve el host y puerto del primario actual."""
+        """Devuelve el host y puerto del primario actual, verificando que responda."""
         with self._lock:
+            es_prim = self._es_primario
             host, puerto = self._primario
+
+        if es_prim or (host, puerto) == (self._host, self._puerto):
+            return {"host": self._host, "puerto": self._puerto}
+
+        # Verificar si el primario guardado sigue respondiendo
+        proxy = Pyro5.api.Proxy(config.uri_de(host, puerto))
+        proxy._pyroTimeout = self._timeout
+        try:
+            proxy.ping()
             return {"host": host, "puerto": puerto}
+        except Exception:
+            # Si el primario no respondio, disparar eleccion de inmediato
+            self.ejecutar_eleccion()
+            with self._lock:
+                h, p = self._primario
+                return {"host": h, "puerto": p}
 
     def actualizar_primario(self, host: str, puerto: int):
         """Actualiza la direccion del primario conocido (usado al recibir replicacion)."""

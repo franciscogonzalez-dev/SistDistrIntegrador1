@@ -25,7 +25,7 @@ from nodoPrimario.subasta import DURACION_VENTANA_SEG
 def main():
     parser = argparse.ArgumentParser(description="Nodo Primario / Servidor de Subastas")
     parser.add_argument("--autos_json", default="autos.json", help="Ruta al JSON de autos")
-    parser.add_argument("--host", default="localhost", help="Host de escucha")
+    parser.add_argument("--host", default="127.0.0.1", help="Host de escucha")
     parser.add_argument("--puerto", type=int, required=True, help="Puerto de escucha")
     parser.add_argument(
         "--backup",
@@ -55,7 +55,7 @@ def main():
     daemon = Pyro5.api.Daemon(host=args.host, port=args.puerto)
     daemon.register(nodo, objectId=config.OBJECT_ID)
 
-    rol = "PRIMARIO" if es_primario else "BACKUP"
+    rol = "PRIMARIO" if nodo.es_primario() else "BACKUP"
     print(f"[{args.puerto}][{rol}] Nodo escuchando en {args.host}:{args.puerto} como {rol}")
     print(f"[{args.puerto}][{rol}] Ronda de {len(ronda_autos)} autos lista, ventana: {DURACION_VENTANA_SEG}s")
     print(f"[{args.puerto}][{rol}] URI: {config.uri_de(args.host, args.puerto)}")
@@ -63,8 +63,8 @@ def main():
     hilo_daemon = threading.Thread(target=daemon.requestLoop, daemon=True)
     hilo_daemon.start()
 
-    if not es_primario:
-        print(f">>> Nodo backup activo en :{args.puerto}, esperando replicacion del primario (Ctrl+C para salir) <<<")
+    if not nodo.es_primario():
+        print(f">>> Nodo réplica activo en :{args.puerto}, sincronizado y vigilando al primario (Ctrl+C para salir) <<<")
         try:
             while True:
                 time.sleep(1)

@@ -41,6 +41,7 @@ class EstadoSubasta: # lo que devuelve el nodo primario
     iniciada: bool = False
     seq_op: int = 0 #la cantidad de operaciones hasta el momento, se incremente en 1 por cada oferta aceptada,
                     #sirve para detectar si un cliente esta desactualizado del monto actual, y para los backups para ver si estan al dia con el primario
+    clientes_uris: list[str] | None = None
 
     def serializar(self):
         return asdict(self)

@@ -7,7 +7,7 @@ import Pyro5.errors
 
 from comun.reloj_lamport import RelojLamport
 from comun import config
-from cliente.cliente import encontrar_primario, OPCIONES_OFERTA
+from cliente.cliente import encontrar_primario, reconectar_con_reintentos, OPCIONES_OFERTA
 
 @Pyro5.api.expose
 class GuiCallback:
@@ -136,7 +136,9 @@ class ClienteSubastaGUI:
 
     def _tarea_conectar(self):
         try:
-            self.primario = encontrar_primario()
+            self.primario = reconectar_con_reintentos(intentos=10, espera_seg=0.5)
+            if self.primario is None:
+                raise RuntimeError("No se encontró ningún nodo primario en el cluster.")
             self.primario._pyroClaimOwnership()
             self.primario._pyroTimeout = 6.0
 
@@ -239,20 +241,32 @@ class ClienteSubastaGUI:
 
     def _tarea_ofertar(self, incremento: float):
         clock_envio = self.reloj.tick()
+        resp = None
         try:
             if self.primario:
                 self.primario._pyroClaimOwnership()
-            resp = self.primario.ofertar(self.cliente_id, incremento, clock_envio, self.seq_visto)
-        except (Pyro5.errors.CommunicationError, Pyro5.errors.PyroError) as err:
-            self.root.after(0, self.log, "⚠️ Problema con primario. Reconectando...")
+                resp = self.primario.ofertar(self.cliente_id, incremento, clock_envio, self.seq_visto)
+            if resp is None or (not resp.get("aceptada") and "backup" in resp.get("motivo", "").lower()):
+                raise Pyro5.errors.CommunicationError("Nodo primario no disponible o es backup")
+        except (Pyro5.errors.CommunicationError, Pyro5.errors.PyroError, Exception):
+            self.root.after(0, self.log, "⚠️ Problema con primario. Reconectando transparentemente...")
+            nuevo_primario = reconectar_con_reintentos(intentos=10, espera_seg=0.5)
+            if nuevo_primario is None:
+                self.root.after(0, self.log, "❌ No se pudo ubicar un primario disponible. Probá de nuevo.")
+                return
+            self.primario = nuevo_primario
             try:
-                self.primario = encontrar_primario()
                 self.primario._pyroClaimOwnership()
                 self.primario._pyroTimeout = 6.0
                 self.primario.subscribir_cliente(str(self.uri_callback))
+                # Sincronizar estado antes del reintento para que la oferta sea procesada con exito
+                nuevo_estado = self.primario.obtener_estado()
+                self.seq_visto = nuevo_estado.get("seq_op", 0)
+                self.reloj.actualizar(nuevo_estado.get("clock_lamport", 0))
+                clock_envio = self.reloj.tick()
                 resp = self.primario.ofertar(self.cliente_id, incremento, clock_envio, self.seq_visto)
             except Exception as e:
-                self.root.after(0, self.log, f"❌ Error en reconexión: {e}")
+                self.root.after(0, self.log, f"❌ Error en reconexión/reintento: {e}")
                 return
 
         self.root.after(0, self._procesar_resultado_oferta, resp)

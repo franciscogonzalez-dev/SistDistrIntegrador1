@@ -190,6 +190,9 @@ class GestorSubasta:
             if "indice_actual" in estado:
                 self.indice_actual = estado["indice_actual"]
 
+            if self.cerrada:
+                self._ganador_anunciado = True
+
             # Aproximar cuando arranco la ventana a partir del tiempo restante recibido,
             # para que si este backup pasa a ser primario la cuenta regresiva continue.
             if self.iniciada:
