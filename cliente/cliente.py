@@ -110,37 +110,52 @@ class ClienteCallback: # para que el server le pueda avisar al cliente cuando la
         # 1. Si el auto actual cerro, anunciar si este cliente gano o perdio
         if estado.get("cerrada") and not estado.get("ronda_finalizada"):
             ganador = estado.get("mejor_postor")
+            seq = estado.get("seq_op", 0)
+            art = formatear_articulo(estado.get("articulo"))
+            monto = formatear_moneda(estado.get("mejor_oferta", 0))
             if ganador and ganador.strip().lower() == self.cliente_id.strip().lower():
-                print(f"  [¡GANASTE LA SUBASTA!] Te adjudicaste el {formatear_articulo(estado.get('articulo'))} por {formatear_moneda(estado.get('mejor_oferta', 0))}.")
+                print(f"  [¡GANASTE LA SUBASTA!] Te adjudicaste el {art} por {monto} (seq: {seq}).")
             elif ganador:
-                print(f"  [SUBASTA FINALIZADA] El {formatear_articulo(estado.get('articulo'))} fue ganado por '{ganador}' por {formatear_moneda(estado.get('mejor_oferta', 0))}.")
+                print(f"  [SUBASTA FINALIZADA] El {art} fue ganado por '{ganador}' por {monto} (seq: {seq}).")
             else:
-                print(f"  [SUBASTA FINALIZADA] El {formatear_articulo(estado.get('articulo'))} cerro sin ofertas.")
+                print(f"  [SUBASTA FINALIZADA] El {art} cerro sin ofertas (seq: {seq}).")
 
         # 2. Si la ronda completa de autos termino
         if estado.get("ronda_finalizada"):
+            self.estado_local["ronda_finalizada"] = True
             ganador = estado.get("mejor_postor")
+            seq = estado.get("seq_op", 0)
+            art = formatear_articulo(estado.get("articulo"))
+            monto = formatear_moneda(estado.get("mejor_oferta", 0))
             if ganador and ganador.strip().lower() == self.cliente_id.strip().lower():
-                print(f"  [¡GANASTE LA SUBASTA!] Te adjudicaste el {formatear_articulo(estado.get('articulo'))} por {formatear_moneda(estado.get('mejor_oferta', 0))}.")
+                print(f"  [¡GANASTE LA SUBASTA!] Te adjudicaste el {art} por {monto} (seq: {seq}).")
             elif ganador:
-                print(f"  [SUBASTA FINALIZADA] El {formatear_articulo(estado.get('articulo'))} fue ganado por '{ganador}' por {formatear_moneda(estado.get('mejor_oferta', 0))}.")
+                print(f"  [SUBASTA FINALIZADA] El {art} fue ganado por '{ganador}' por {monto} (seq: {seq}).")
             print("  [RONDA FINALIZADA] No quedan mas autos para subastar. Gracias por participar.")
 
         # 3. Si la subasta sigue abierta (en curso o pasando a un nuevo auto)
         elif not estado.get("cerrada"):
             postor = estado.get("mejor_postor")
+            seq = estado.get("seq_op", 0)
+            tiempo = max(0.0, estado.get("tiempo_restante_seg", 0.0))
+            art = formatear_articulo(estado.get("articulo"))
+            monto = formatear_moneda(estado.get("mejor_oferta", 0))
+
             if postor is None:
-                print(f"  [SIGUIENTE AUTO EN SUBASTA] {formatear_articulo(estado.get('articulo'))} | Base: {formatear_moneda(estado.get('mejor_oferta', 0))}")
+                print(f"  [SIGUIENTE AUTO EN SUBASTA] {art} | Base: {monto} (seq: {seq})")
             elif postor.strip().lower() == self.cliente_id.strip().lower():
-                print(f"  [AVISO] ¡Vas ganando! Tu oferta de {formatear_moneda(estado.get('mejor_oferta', 0))} es la mejor actual.")
+                print(f"  [AVISO] ¡Vas ganando! Tu oferta de {monto} por el {art} es la mejor actual (tiempo: {tiempo:.1f}s | seq: {seq})")
             else:
-                print(f"  [AVISO] Nueva mejor oferta: {formatear_moneda(estado.get('mejor_oferta', 0))} por '{postor}' (tiempo: {max(0.0, estado.get('tiempo_restante_seg', 0.0)):.1f}s)")
+                print(f"  [AVISO] Nueva mejor oferta: {monto} por '{postor}' en {art} (tiempo: {tiempo:.1f}s | seq: {seq})")
 
         print("─" * 65)
         self.estado_local["reloj"].actualizar(estado["clock_lamport"])
         self.estado_local["seq_visto"] = estado["seq_op"]
-        # Re-imprimir el prompt para mantener el cursor en su lugar
-        print(f"  {self.cliente_id.upper()} > ", end="", flush=True)
+        # Re-imprimir el prompt solo si la notificacion no fue por una oferta propia
+        postor = estado.get("mejor_postor")
+        es_mi_oferta = postor and postor.strip().lower() == self.cliente_id.strip().lower() and not estado.get("cerrada")
+        if not es_mi_oferta:
+            print(f"  {self.cliente_id.upper()} > ", end="", flush=True)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -175,8 +190,14 @@ def main():
             print("  Subasta iniciada.")
 
         while True:
+            if estado_local.get("ronda_finalizada"):
+                print("\n  La ronda de subastas ha finalizado. Saliendo...")
+                break
+
             print("\n  [1] +$100 | [2] +$250 | [3] +$500 | [q] Salir")
             entrada = input(f"  {args.id.upper()} > ").strip()
+            if not entrada:
+                continue
             if entrada.lower() == "q":
                 break
             if entrada not in OPCIONES_OFERTA:
@@ -216,8 +237,9 @@ def main():
             reloj.actualizar(respuesta["estado"]["clock_lamport"])
             estado_local["seq_visto"] = respuesta["estado"]["seq_op"] 
 
-            print(f"  {respuesta['motivo']}")
-            mostrar_estado(respuesta["estado"])
+            if not respuesta.get("aceptada"):
+                seq = respuesta.get("estado", {}).get("seq_op", 0)
+                print(f"  [AVISO] Oferta no aceptada: {respuesta['motivo']} (seq: {seq})")
 
     except (KeyboardInterrupt, EOFError):
         print("\n  Saliendo...")
