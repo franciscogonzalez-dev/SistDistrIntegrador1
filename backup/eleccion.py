@@ -139,6 +139,23 @@ class MonitorEleccion:
             if not vivos:
                 return
 
+            # Sin esto, un nodo se autoproclamaba primario mirando solo a quien
+            # pudo contactar en la ventana de timeout (a veces solo el mismo),
+            # lo que permitia que dos backups se autoproclamaran a la vez ante
+            # una particion o una demora transitoria de red (split-brain). Con
+            # 3 nodos, exigir mayoria (2 de 3) obliga a que ambos vean el mismo
+            # conjunto de candidatos antes de decidir, asi el resultado
+            # determinista de prioridad_nodo() coincide para los dos.
+            total_nodos = len(config.NODOS)
+            mayoria_necesaria = total_nodos // 2 + 1
+            if len(vivos) < mayoria_necesaria:
+                print(
+                    f"[{self._puerto}][eleccion] No se alcanzo mayoria "
+                    f"({len(vivos)}/{total_nodos}, se necesitan {mayoria_necesaria}). "
+                    "Se pospone la eleccion."
+                )
+                return
+
             elegido = max(vivos, key=lambda nodo: self.prioridad_nodo(nodo))
             nodo_elegido = (elegido["host"], elegido["puerto"])
 
