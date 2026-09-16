@@ -209,6 +209,28 @@ class NodoSubasta:
         if self.es_primario() and self.replicador:
             self.replicador.replicar_a_backups(self.obtener_estado())
 
+    def recibir_election(self, host_emisor: str, puerto_emisor: int):
+        """
+        Mensaje ELECTION del algoritmo Bully: otro nodo nos avisa que inicio
+        una eleccion. Si tenemos mayor prioridad, respondemos OK y lanzamos
+        nuestra propia eleccion.
+        """
+        self.eleccion.recibir_election(host_emisor, puerto_emisor)
+
+    def recibir_ok(self, host_emisor: str, puerto_emisor: int):
+        """
+        Mensaje OK del algoritmo Bully: un nodo superior nos confirma que se
+        hara cargo de la eleccion. Cancelamos nuestra candidatura.
+        """
+        self.eleccion.recibir_ok(host_emisor, puerto_emisor)
+
+    def recibir_coordinator(self, host_coordinador: str, puerto_coordinador: int):
+        """
+        Mensaje COORDINATOR del algoritmo Bully: el nuevo primario se anuncia
+        a todos los nodos vivos del cluster.
+        """
+        self.eleccion.recibir_coordinator(host_coordinador, puerto_coordinador)
+
     def _vigila_cierre(self):
         """Hilo periodico que revisa si se cumplio la ventana de 30s sin nuevas ofertas."""
         while True:

@@ -11,9 +11,9 @@ en vez de asumir que siempre es el primero.
 
 
 NODOS = [
-    ("10.122.240.32", 9091),
-    ("10.122.240.206", 9092),
-    ("10.122.240.33", 9093),
+    ("172.16.216.121", 9091),
+    ("172.16.56.17", 9092),
+    ("172.16.86.122", 9093),
 ]
 
 # Nombre de objeto Pyro fijo e igual en todos los nodos. Al ser siempre el
