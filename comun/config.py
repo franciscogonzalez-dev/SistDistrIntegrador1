@@ -17,10 +17,11 @@ if os.environ.get("LOCAL_CLUSTER") == "1":
     ]
 else:
     NODOS = [
-        ("172.16.216.121", 9091),
-        ("172.16.56.17", 9092),
-        ("172.16.86.122", 9093),
+        ("10.122.240.32", 9091),
+        ("10.122.240.183", 9092),
+        ("10.122.240.206", 9093),
     ]
+
 
 # Nombre de objeto Pyro fijo e igual en todos los nodos. Al ser siempre el
 # mismo, se puede construir el URI directamente sin consultar a nadie.
