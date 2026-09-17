@@ -12,21 +12,21 @@
 
 **Nodo 1 (Puerto 9091):**
 ```bash
-python -m nodoPrimario.servidor --puerto 9091
+python -m nodoPrimario.servidor --puerto 9091 --host <ip-nodo1>
 ```
 *Si es el primer nodo en arrancar el sistema, esperará que presiones `s` + Enter para iniciar la subasta. Si se levanta cuando ya hay una subasta en curso en otro nodo, se unirá automáticamente como réplica.*
 
 **Nodo 2 (Puerto 9092 - Backup):**
 ```bash
-python -m backup.servidor --puerto 9092
+python -m backup.servidor --puerto 9092 --host <ip-nodo2>
 ```
 
 **Nodo 3 (Puerto 9093 - Backup):**
 ```bash
-python -m backup.servidor --puerto 9093
+python -m backup.servidor --puerto 9093 --host <ip-nodo3>
 ```
 
-*(También es compatible `python -m nodoPrimario.servidor --puerto 9092 --backup`).*
+*(También es compatible `python -m nodoPrimario.servidor --puerto 9092 --backup --host <ip-nodo>`).*
 
 ---
 
