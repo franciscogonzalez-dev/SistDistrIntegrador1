@@ -58,12 +58,20 @@ class GestorReplicacion:
     def aplicar_estado(self, subasta, estado: dict):
         """
         El backup recibe el estado del primario y actualiza su subasta local.
-        Verifica saltos de seq_op para detectar inconsistencias o mensajes perdidos.
+        Verifica monotonicidad y saltos de seq_op para detectar inconsistencias.
         """
-        if estado["seq_op"] not in (subasta.seq_op, subasta.seq_op + 1):
+        # Descartar estados obsoletos (regresión en el tiempo lógico / mensaje viejo)
+        if estado["seq_op"] < subasta.seq_op:
+            print(
+                f"[{self._puerto}][BACKUP][replicacion] RECHAZADO: estado obsoleto ignorado "
+                f"(local={subasta.seq_op}, recibido={estado['seq_op']})"
+            )
+            return
+
+        if estado["seq_op"] > subasta.seq_op + 1:
             print(
                 f"[{self._puerto}][BACKUP][replicacion] ALERTA: salto de seq_op "
-                f"({subasta.seq_op} -> {estado['seq_op']}), se perdio una actualizacion"
+                f"({subasta.seq_op} -> {estado['seq_op']}), se perdieron actualizaciones intermedias"
             )
 
         subasta.aplicar_estado_replicado(estado)
@@ -71,3 +79,4 @@ class GestorReplicacion:
             f"[{self._puerto}][BACKUP][replicacion] Estado replicado: "
             f"mejor_oferta={subasta.mejor_oferta} mejor_postor={subasta.mejor_postor!r} seq_op={subasta.seq_op}"
         )
+

@@ -175,6 +175,10 @@ class GestorSubasta:
         Ajusta el reloj de Lamport y el tiempo transcurrido de la ventana.
         """
         with self._lock:
+            # Regla de monotonicidad: nunca aceptar un estado con secuencia menor a la ya alcanzada
+            if estado.get("seq_op", 0) < self.seq_op:
+                return
+
             self.articulo = estado["articulo"]
             self.mejor_oferta = estado["mejor_oferta"]
             self.mejor_postor = estado["mejor_postor"]
