@@ -1,10 +1,8 @@
-"""
-Lista de nodos que forman parte del cluster (primario y backups).
-No usamos name server: todos -clientes y nodos- conocen esta lista de antemano,
-y cada nodo escucha en una IP:puerto fija.
+# Lista de nodos que forman parte del cluster (primario y backups).
+# No usamos name server: todos -clientes y nodos- conocen esta lista de antemano, y cada nodo escucha en una IP:puerto fija.
 
-Cualquiera de estos nodos puede ser electo primario segun el algoritmo de eleccion.
-"""
+# Cualquiera de estos nodos puede ser electo primario segun el algoritmo de eleccion.
+
 
 import os
 
@@ -18,8 +16,8 @@ if os.environ.get("LOCAL_CLUSTER") == "1":
 else:
     NODOS = [
         ("10.122.240.32", 9091),
-        ("10.122.240.183", 9092),
-        ("10.122.240.206", 9093),
+        ("10.122.240.206", 9092),
+        ("10.122.240.33", 9093),
     ]
 
 

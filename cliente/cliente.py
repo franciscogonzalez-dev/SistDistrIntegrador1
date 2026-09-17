@@ -1,11 +1,8 @@
-"""
-Cliente del sistema de subastas. Conoce una lista fija de nodos de arranque, pero la
-eleccion del primario la hacen los propios nodos. Si el nodo guardado cae,
-consulta a otro nodo y sigue la ubicacion del nuevo primario.
+# Cliente del sistema de subastas. Conoce una lista fija de nodos de arranque, pero la
+# eleccion del primario la hacen los propios nodos. Si el nodo guardado cae,
+# consulta a otro nodo y sigue la ubicacion del nuevo primario.
 
-Correr:
-    python -m cliente.cliente --id ana
-"""
+# Correr: python -m cliente.cliente --id ana
 
 import argparse
 import socket

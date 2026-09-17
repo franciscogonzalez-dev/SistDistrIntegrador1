@@ -1,7 +1,4 @@
-"""
-Modulo que encapsula el estado y las reglas de negocio de la subasta.
-Independiente de la capa de red / RPC (Pyro5).
-"""
+# Modulo que encapsula el estado y las reglas de negocio de la subasta. Independiente de la capa de red / RPC (Pyro5).
 
 import threading
 import time

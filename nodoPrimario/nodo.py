@@ -1,7 +1,4 @@
-"""
-Nodo del sistema de subastas distribuido expuesto mediante Pyro5.
-Orquesta los componentes de Subasta, Clientes, Replicacion y Eleccion.
-"""
+# Nodo del sistema de subastas distribuido expuesto mediante Pyro5. Orquesta los componentes de Subasta, Clientes, Replicacion y Eleccion.
 
 import threading
 import time
@@ -12,7 +9,6 @@ from nodoPrimario.subasta import GestorSubasta, DURACION_VENTANA_SEG
 from nodoPrimario.clientes import GestorClientes
 from backup.replicacion import GestorReplicacion
 from backup.eleccion import MonitorEleccion
-
 
 @Pyro5.api.expose
 class NodoSubasta:
