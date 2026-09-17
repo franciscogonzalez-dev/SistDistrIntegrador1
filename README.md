@@ -4,7 +4,7 @@
 - Los nodos monitorizan al primario con heartbeats periódicos. Si el primario cae, ejecutan una elección concurrente eligiendo al nodo con mayor secuencia de operación (`seq_op`), mayor reloj de `Lamport` y desempate por índice.
 - Si cae el primario original (9091) y luego el nodo promovido (9092), el último nodo restante (9093) asume la subasta en solitario sin colgarse.
 - Si un nodo previamente caído (por ejemplo, el 9091) se vuelve a levantar, detecta automáticamente la existencia de un primario activo en el cluster, sincroniza su estado y se incorpora de inmediato como **RÉPLICA DISPONIBLE** (sin interrumpir la subasta ni pedir confirmación).
-- Tanto el cliente de consola como el cliente gráfico (`cliente_gui`) detectan caídas en tiempo real, se reconectan al nuevo primario con reintentos automáticos, sincronizan su secuencia de operación y reenvían cualquier oferta en vuelo sin que el usuario sufra interrupciones.
+- El cliente detecta caídas en tiempo real, se reconecta al nuevo primario con reintentos automáticos, sincroniza su secuencia de operación y reenvía cualquier oferta en vuelo sin que el usuario sufra interrupciones.
 - Las listas de clientes suscritos a notificaciones push se replican entre nodos, de modo que el nuevo primario sigue notificando a todos los clientes inmediatamente tras ser promovido.
 
 
@@ -12,21 +12,21 @@
 
 **Nodo 1 (Puerto 9091):**
 ```bash
-python -m nodoPrimario.servidor --puerto 9091
+python -m nodoPrimario.servidor --host <IP_DEL_CONFIG> --puerto 9091
 ```
 *Si es el primer nodo en arrancar el sistema, esperará que presiones `s` + Enter para iniciar la subasta. Si se levanta cuando ya hay una subasta en curso en otro nodo, se unirá automáticamente como réplica.*
 
 **Nodo 2 (Puerto 9092 - Backup):**
 ```bash
-python -m backup.servidor --puerto 9092
+python -m backup.servidor --host <IP_DEL_CONFIG> --puerto 9092
 ```
 
 **Nodo 3 (Puerto 9093 - Backup):**
 ```bash
-python -m backup.servidor --puerto 9093
+python -m backup.servidor --host <IP_DEL_CONFIG> --puerto 9093
 ```
 
-*(También es compatible `python -m nodoPrimario.servidor --puerto 9092 --backup`).*
+*(También es compatible `python -m nodoPrimario.servidor --host <IP_DEL_CONFIG> --puerto 9092 --backup`).*
 
 ---
 
@@ -34,12 +34,7 @@ python -m backup.servidor --puerto 9093
 
 Podes abrir múltiples clientes en paralelo:
 
-**Cliente con Interfaz Gráfica (Tkinter):**
-```bash
-python -m cliente.cliente_gui
-```
-
-**Cliente de Consola:**
+**Cliente:**
 ```bash
 python -m cliente.cliente --id ana
 python -m cliente.cliente --id carlos
@@ -64,6 +59,5 @@ backup/
   replicacion.py       -> Replicación concurrente y no bloqueante de estado.
   servidor.py          -> Punto de entrada para nodos backup.
 cliente/
-  cliente.py           -> Cliente de consola con reconexión y reintento automático.
-  cliente_gui.py       -> Cliente gráfico (Tkinter) con failover transparente.
+  cliente.py           -> Cliente con reconexión y reintento automático.
 ```

@@ -3,11 +3,11 @@ Punto de entrada para ejecutar el nodo del sistema de subastas (Primario por def
 Soporta tambien el flag --backup para mantener compatibilidad con scripts existentes.
 
 Correr primario:
-    python -m nodoPrimario.servidor --host localhost --puerto 9091 --articulo "Cuadro"
+    python -m nodoPrimario.servidor --host <IP_DEL_CONFIG> --puerto 9091
 
 Correr backup:
-    python -m backup.servidor --puerto 9092
-    (o: python -m nodoPrimario.servidor --puerto 9092 --backup)
+    python -m backup.servidor --host <IP_DEL_CONFIG> --puerto 9092
+    (o: python -m nodoPrimario.servidor --host <IP_DEL_CONFIG> --puerto 9092 --backup)
 """
 
 import argparse

@@ -2,8 +2,8 @@
 Punto de entrada para ejecutar un nodo en modo BACKUP.
 
 Correr:
-    python -m backup.servidor --puerto 9092
-    python -m backup.servidor --puerto 9093
+    python -m backup.servidor --host <IP_DEL_CONFIG> --puerto 9092
+    python -m backup.servidor --host <IP_DEL_CONFIG> --puerto 9093
 """
 
 import argparse
