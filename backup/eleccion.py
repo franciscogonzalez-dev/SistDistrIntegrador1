@@ -23,10 +23,12 @@ import Pyro5.api
 import Pyro5.errors
 from comun import config
 
-INTERVALO_HEARTBEAT_SEG = 0.5
-TIMEOUT_PING_SEG = 0.8
+# Ajuste razonable para un cluster local: suficiente para detectar caídas sin
+# disparar elecciones por demoras cortas de red o de CPU.
+INTERVALO_HEARTBEAT_SEG = 1.0
+TIMEOUT_PING_SEG = 3.0
 # Tiempo que espera un nodo para recibir OK antes de proclamarse coordinador.
-TIMEOUT_OK_SEG = 2.0
+TIMEOUT_OK_SEG = 3.0
 
 
 class MonitorEleccion:
