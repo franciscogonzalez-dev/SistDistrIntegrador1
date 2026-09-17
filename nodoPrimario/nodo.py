@@ -26,6 +26,8 @@ class NodoSubasta:
         self._host = host
         self._puerto = puerto
         self._identificador = f"{puerto}" if puerto else "nodo"
+        self._lock_cierre = threading.Lock()
+        self._hilo_cierre_activo = False
 
         if ronda_autos is None:
             ronda_autos = [{"marca": "Auto", "modelo": "Prueba", "anio": 2000, "kilometraje": 0, "fallas_defectos": "", "imagenes": []}]
@@ -69,24 +71,15 @@ class NodoSubasta:
             else:
                 self.eleccion.iniciar_vigilancia()
 
-    def _es_nodo_primario_default(self) -> bool:
-        """Indica si este nodo es el primer nodo configurado en NODOS."""
-        return bool(config.NODOS and (self._host, self._puerto) == config.NODOS[0])
-
     def _detectar_primario_existente(self) -> tuple[str, int, dict] | None:
         """Verifica si ya existe un primario activo en el cluster para unirse como replica."""
         for h, p in config.otros_nodos(self._host, self._puerto):
             try:
                 proxy = Pyro5.api.Proxy(config.uri_de(h, p))
-                proxy._pyroTimeout = 0.6
+                proxy._pyroTimeout = 0.8
                 if proxy.es_primario():
                     estado = proxy.obtener_estado()
-                    # Si la subasta ya esta iniciada o ya tiene operaciones, hay un primario legitimo activo
-                    if estado.get("iniciada") or estado.get("seq_op", 0) > 0:
-                        return (h, p, estado)
-                    # Si no ha iniciado pero este nodo no es el primario por defecto, unirse como replica
-                    if not self._es_nodo_primario_default():
-                        return (h, p, estado)
+                    return (h, p, estado)
             except Exception:
                 continue
         return None
@@ -96,8 +89,12 @@ class NodoSubasta:
         return (self.subasta.reloj.valor(), self.subasta.seq_op)
 
     def _iniciar_vigilancia_cierre(self):
-        """Inicia el hilo para monitorear el timeout de la subasta."""
-        threading.Thread(target=self._vigila_cierre, daemon=True).start()
+        """Inicia el hilo para monitorear el timeout de la subasta si no esta ya corriendo."""
+        with self._lock_cierre:
+            if self._hilo_cierre_activo:
+                return
+            self._hilo_cierre_activo = True
+            threading.Thread(target=self._vigila_cierre, daemon=True).start()
 
     def _al_ser_promovido(self):
         """Callback invocado por MonitorEleccion cuando este nodo gana la eleccion."""
@@ -139,9 +136,21 @@ class NodoSubasta:
     def ubicacion_primario(self) -> dict:
         return self.eleccion.ubicacion_primario()
 
+    def obtener_info_eleccion(self) -> dict:
+        """Endpoint RPC ligero en memoria para el algoritmo de eleccion Bully."""
+        clock_propio, seq_propio = self._obtener_estado_local()
+        return {
+            "host": self._host,
+            "puerto": self._puerto,
+            "clock_lamport": clock_propio,
+            "seq_op": seq_propio,
+            "es_primario": self.es_primario(),
+        }
+
     def obtener_estado(self) -> dict:
-        ubicacion = self.ubicacion_primario()
-        estado = self.subasta.estado_actual(ubicacion["host"], ubicacion["puerto"])
+        """Retorna el estado actual de la subasta sin bloquear realizando pings."""
+        h, p = self.eleccion.primario_actual()
+        estado = self.subasta.estado_actual(h, p)
         estado["clientes_uris"] = self.clientes.obtener_uris()
         return estado
 
@@ -152,15 +161,16 @@ class NodoSubasta:
         time.sleep(0.5)  # simula concurrencia de ofertas
         if not self.es_primario():
             # Si un cliente llamo a este nodo y no es primario, verificar si el primario cayo
-            self.eleccion.ubicacion_primario()
+            ubicacion = self.eleccion.ubicacion_primario()
             if not self.es_primario():
                 return {
                     "aceptada": False,
                     "motivo": "Este nodo es backup, no acepta ofertas",
                     "estado": self.obtener_estado(),
                 }
+        else:
+            ubicacion = {"host": self._host, "puerto": self._puerto}
 
-        ubicacion = self.ubicacion_primario()
         aceptada, motivo, estado = self.subasta.procesar_oferta(
             cliente_id=cliente_id,
             incremento=incremento,
@@ -209,13 +219,15 @@ class NodoSubasta:
         if self.es_primario() and self.replicador:
             self.replicador.replicar_a_backups(self.obtener_estado())
 
-    def recibir_election(self, host_emisor: str, puerto_emisor: int):
+    def recibir_election(
+        self, host_emisor: str, puerto_emisor: int, info_emisor: dict | None = None
+    ) -> bool:
         """
         Mensaje ELECTION del algoritmo Bully: otro nodo nos avisa que inicio
         una eleccion. Si tenemos mayor prioridad, respondemos OK y lanzamos
         nuestra propia eleccion.
         """
-        self.eleccion.recibir_election(host_emisor, puerto_emisor)
+        return self.eleccion.recibir_election(host_emisor, puerto_emisor, info_emisor)
 
     def recibir_ok(self, host_emisor: str, puerto_emisor: int):
         """
@@ -224,41 +236,51 @@ class NodoSubasta:
         """
         self.eleccion.recibir_ok(host_emisor, puerto_emisor)
 
-    def recibir_coordinator(self, host_coordinador: str, puerto_coordinador: int):
+    def recibir_coordinator(
+        self, host_coordinador: str, puerto_coordinador: int, info_coordinador: dict | None = None
+    ):
         """
         Mensaje COORDINATOR del algoritmo Bully: el nuevo primario se anuncia
         a todos los nodos vivos del cluster.
         """
-        self.eleccion.recibir_coordinator(host_coordinador, puerto_coordinador)
+        self.eleccion.recibir_coordinator(host_coordinador, puerto_coordinador, info_coordinador)
 
     def _vigila_cierre(self):
         """Hilo periodico que revisa si se cumplio la ventana de 30s sin nuevas ofertas."""
-        while True:
-            time.sleep(1.0)
-            if self.subasta.verificar_cierre():
-                print(
-                    f"[{self._puerto}][PRIMARIO][subasta] SUBASTA CERRADA. "
-                    f"Ganador: {self.subasta.mejor_postor!r} con ${self.subasta.mejor_oferta}"
-                )
-                estado = self.obtener_estado()
-                estado["mensaje_transicion"] = "Preparate para la siguiente subasta..."
-                self.clientes.notificar(estado)
-                if self.replicador:
-                    self.replicador.replicar_a_backups(estado)
-                
-                print(f"[{self._puerto}][PRIMARIO][subasta] Esperando 5 segundos para la proxima subasta...")
-                time.sleep(5.0)
+        try:
+            while self.es_primario():
+                time.sleep(1.0)
+                if not self.es_primario():
+                    break
+                if self.subasta.verificar_cierre():
+                    print(
+                        f"[{self._puerto}][PRIMARIO][subasta] SUBASTA CERRADA. "
+                        f"Ganador: {self.subasta.mejor_postor!r} con ${self.subasta.mejor_oferta}"
+                    )
+                    estado = self.obtener_estado()
+                    estado["mensaje_transicion"] = "Preparate para la siguiente subasta..."
+                    self.clientes.notificar(estado)
+                    if self.replicador:
+                        self.replicador.replicar_a_backups(estado)
+                    
+                    print(f"[{self._puerto}][PRIMARIO][subasta] Esperando 5 segundos para la proxima subasta...")
+                    time.sleep(5.0)
+                    if not self.es_primario():
+                        break
 
-                if self.subasta.siguiente_auto():
-                    print(f"[{self._puerto}][PRIMARIO][subasta] INICIANDO SIGUIENTE AUTO.")
-                    nuevo_estado = self.obtener_estado()
-                    self.clientes.notificar(nuevo_estado)
-                    if self.replicador:
-                        self.replicador.replicar_a_backups(nuevo_estado)
-                else:
-                    print(f"[{self._puerto}][PRIMARIO][subasta] RONDA FINALIZADA.")
-                    estado_final = self.obtener_estado()
-                    estado_final["ronda_finalizada"] = True
-                    self.clientes.notificar(estado_final)
-                    if self.replicador:
-                        self.replicador.replicar_a_backups(estado_final)
+                    if self.subasta.siguiente_auto():
+                        print(f"[{self._puerto}][PRIMARIO][subasta] INICIANDO SIGUIENTE AUTO.")
+                        nuevo_estado = self.obtener_estado()
+                        self.clientes.notificar(nuevo_estado)
+                        if self.replicador:
+                            self.replicador.replicar_a_backups(nuevo_estado)
+                    else:
+                        print(f"[{self._puerto}][PRIMARIO][subasta] RONDA FINALIZADA.")
+                        estado_final = self.obtener_estado()
+                        estado_final["ronda_finalizada"] = True
+                        self.clientes.notificar(estado_final)
+                        if self.replicador:
+                            self.replicador.replicar_a_backups(estado_final)
+        finally:
+            with self._lock_cierre:
+                self._hilo_cierre_activo = False
