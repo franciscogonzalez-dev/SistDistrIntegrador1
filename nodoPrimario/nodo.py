@@ -185,9 +185,16 @@ class NodoSubasta:
             print(f"[{self._puerto}][PRIMARIO][subasta] Nueva mejor oferta: {cliente_id} -> {self.subasta.mejor_oferta}")
             # Notificar push a clientes conectados
             self.clientes.notificar(estado)
-            # Replicacion a los backups
+            # Replicacion semi-sincronica: bloquea hasta el ACK del primer backup
+            # (o hasta el timeout si ninguno responde a tiempo) antes de confirmarle
+            # la oferta al cliente; el resto de los backups se actualizan en paralelo.
             if self.replicador:
-                self.replicador.replicar_a_backups(estado)
+                confirmado = self.replicador.replicar_a_backups(estado)
+                if not confirmado:
+                    print(
+                        f"[{self._puerto}][PRIMARIO][replicacion] ADVERTENCIA: ningun backup confirmo "
+                        f"a tiempo (seq_op={estado['seq_op']})"
+                    )
 
         return {
             "aceptada": aceptada,
