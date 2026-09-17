@@ -7,7 +7,6 @@ Correr primario:
 
 Correr backup:
     python -m backup.servidor --host <IP_DEL_CONFIG> --puerto 9092
-    (o: python -m nodoPrimario.servidor --host <IP_DEL_CONFIG> --puerto 9092 --backup)
 """
 
 import argparse

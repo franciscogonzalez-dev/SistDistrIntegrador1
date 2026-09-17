@@ -26,8 +26,6 @@ python -m backup.servidor --host <IP_DEL_CONFIG> --puerto 9092
 python -m backup.servidor --host <IP_DEL_CONFIG> --puerto 9093
 ```
 
-*(También es compatible `python -m nodoPrimario.servidor --host <IP_DEL_CONFIG> --puerto 9092 --backup`).*
-
 ---
 
 ### 2) Conectar Clientes
